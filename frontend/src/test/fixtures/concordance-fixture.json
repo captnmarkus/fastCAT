@@ -1,0 +1,26 @@
+{
+  "termbase": {
+    "entries": [
+      {
+        "entryId": "concept-1",
+        "source": ["Satz", "Satzung"],
+        "target": [
+          { "text": "sentence", "status": "preferred" },
+          { "text": "clause", "status": "allowed" }
+        ],
+        "fields": { "Kategorie": "Recht", "Produkttyp": "Handbuch" }
+      },
+      {
+        "entryId": "concept-2",
+        "source": ["Absatz"],
+        "target": [{ "text": "paragraph", "status": "preferred" }],
+        "fields": { "Kategorie": "Recht" }
+      }
+    ]
+  },
+  "segments": [
+    { "id": 1, "index": 0, "src": "Das ist ein Satz.", "tgt": "This is a sentence." },
+    { "id": 2, "index": 1, "src": "Der Absatz folgt.", "tgt": "The paragraph follows." },
+    { "id": 3, "index": 2, "src": "Satz und Absatz.", "tgt": "" }
+  ]
+}

@@ -1,0 +1,30 @@
+Rewrite Threshold Checklist (for this repo)
+Use this gate before moving backend services to Go/Java/Rust:
+
+SLA gap: p99 latency exceeds target by >30% in 3 repeated runs.
+Error budget: non-2xx + transport errors >0.5% at expected peak load.
+Headroom: service CPU is >75% at peak while throughput is still below target.
+Optimization exhausted: DB/index/query/caching/pooling tuning yields <20% further gain.
+Workload fit: hotspot is CPU-bound (not mostly DB/network wait).
+Economics: projected gain is at least 2x throughput or 30% infra-cost reduction within 12 months.
+Decision rule:
+
+4/6 true: rewrite only hotspot workers/services.
+5+/6 true: consider full service rewrite.
+Benchmark Run (Docker stack, autocannon, 20s runs)
+
+Date: February 9, 2026
+Endpoints via http://localhost:9991
+Results:
+
+/api/health (100 conn): 2593.65 rps avg, p50 35ms, p90 67ms, p99 83ms, errors 2, non2xx 0
+/api/cat/health (100 conn): 2444.40 rps avg, p50 41ms, p90 54ms, p99 63ms, errors 0, non2xx 0
+/api/cat/projects admin token (50 conn): 337.05 rps avg, p50 144ms, p90 157ms, p99 219ms, errors 0, non2xx 0
+/api/cat/projects manager token (50 conn): 353.90 rps avg, p50 140ms, p90 152ms, p99 168ms, errors 0, non2xx 0
+/api/auth/login (30 conn): 23.60 rps avg, p50 1267ms, p90 1312ms, p99 1339ms, errors 0, non2xx 0
+Interpretation:
+
+Read paths look healthy for Node/Fastify.
+Login is intentionally expensive (password hashing), so high latency there is not a rewrite signal by itself.
+Based on this run, a full backend rewrite is not justified yet.
+Also completed sequential Docker startup and role smoke validation (docker-smoke-check.mjs) successfully.

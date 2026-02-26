@@ -1,0 +1,98 @@
+# -----------------------------------------
+# Dependencies
+# -----------------------------------------
+node_modules/
+pnpm-lock.yaml
+# Keep package-lock.json or yarn.lock depending on your package manager preference
+# yarn.lock
+
+# -----------------------------------------
+# Build & Transpilation
+# -----------------------------------------
+dist/
+build/
+out/
+.output/
+*.tsbuildinfo
+
+# -----------------------------------------
+# Environment & Secrets
+# -----------------------------------------
+# Ignore all .env files...
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# ...but allow the example template
+!.env.example
+
+# -----------------------------------------
+# Logs
+# -----------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# -----------------------------------------
+# IDE & System Files
+# -----------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# -----------------------------------------
+# Database (SQLite)
+# -----------------------------------------
+# Ignore actual database files, but keep source code like db.ts
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+
+# -----------------------------------------
+# Application Data / Runtime Storage
+# -----------------------------------------
+
+# 1. Uploads: Ignore user uploaded project files/images
+uploads/*
+!uploads/.gitkeep
+
+# 2. TM Samples: Ignore large TMX files dropped in by users...
+samples/tm/*
+# ...but keep the directory structure
+!samples/tm/.gitkeep
+# ...and optionally keep specific seeded samples if you want them in the repo
+# !samples/tm/sample-en-de.tmx
+
+# 3. Glossaries: Ignore runtime TBX files
+glossaries/*
+!glossaries/.gitkeep
+
+# -----------------------------------------
+# Testing
+# -----------------------------------------
+coverage/
+playwright-report/
+test-results/
+
+# -----------------------------------------
+# Terraform
+# -----------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

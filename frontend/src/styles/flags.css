@@ -1,0 +1,15 @@
+@import "flag-icons/css/flag-icons.min.css";
+
+.flag-icon {
+  display: inline-block;
+  width: 1.2em;
+  height: 0.9em;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+.flag-icon.fi {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}

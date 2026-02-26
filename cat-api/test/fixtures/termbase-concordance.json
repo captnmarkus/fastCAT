@@ -1,0 +1,12 @@
+{
+  "entries": [
+    { "sourceLang": "de", "targetLang": "en", "sourceTerm": "Satz", "targetTerm": "sentence", "status": "preferred" },
+    { "sourceLang": "de", "targetLang": "en", "sourceTerm": "Satz", "targetTerm": "clause", "status": "allowed" }
+  ],
+  "synonyms": [
+    { "entryIndex": 0, "language": "de", "text": "Satzung", "status": "allowed" }
+  ],
+  "entryFields": [
+    { "entryIndex": 1, "fields": { "Kategorie": null, "Illustration": null } }
+  ]
+}

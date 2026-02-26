@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header
+    creationtool="tm-lite"
+    creationtoolversion="0.1"
+    segtype="sentence"
+    adminlang="en-GB"
+    srclang="de"
+    datatype="plaintext"
+  />
+  <body>
+    <tu>
+      <tuv xml:lang="de">
+        <seg>Dies ist ein einfacher Test.</seg>
+      </tuv>
+      <tuv xml:lang="en">
+        <seg>This is a simple text.</seg>
+      </tuv>
+    </tu>
+</body>
+</tmx>

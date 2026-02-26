@@ -1,0 +1,220 @@
+services:
+  tm-db:
+    image: postgres:15-alpine3.20
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tmlite}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tmlitepass}
+      POSTGRES_DB: ${POSTGRES_DB:-tmlite}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tmlite} -d ${POSTGRES_DB:-tmlite}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine3.20
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_started
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-fastcat-files}
+    volumes:
+      - ./infra/minio/cors.json:/cors.json:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "
+      until mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\"; do
+        echo 'waiting for minio...'; sleep 2;
+      done;
+      mc mb -p \"local/$${S3_BUCKET}\" || true;
+      mc version enable \"local/$${S3_BUCKET}\" || true;
+      if mc cors set \"local/$${S3_BUCKET}\" /cors.json >/tmp/minio-cors.log 2>&1; then
+        echo 'minio cors configured';
+      else
+        cors_err=\"$$(cat /tmp/minio-cors.log)\";
+        case \"$$cors_err\" in
+          *not\\ implemented*|*Not\\ Implemented*|*decoding\\ xml*|*Decoding\\ XML*)
+            echo 'minio cors setup skipped (bucket CORS API unavailable in current MinIO build)';
+            ;;
+          *)
+            echo 'minio cors setup failed:';
+            echo \"$$cors_err\";
+            ;;
+        esac;
+      fi;
+      echo 'minio init done';
+      "
+
+  t5memory:
+    image: translate5/t5memory
+    restart: unless-stopped
+    environment: {}
+    ports:
+      - "4040:4040"
+    volumes:
+      - t5mem-data:/root/.t5memory/MEM
+
+  tm-proxy:
+    build:
+      context: ./tm-proxy
+    environment:
+      T5MEMORY_BASE_URL: ${T5MEMORY_BASE_URL:-http://t5memory:4040/t5memory}
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET:-changeme-jwt-secret}
+      TM_DB_URL: ${TM_DB_URL:-postgresql://tmlite:tmlitepass@tm-db:5432/tmlite}
+      TM_TMX_MIRROR_MODE: ${TM_TMX_MIRROR_MODE:-override}
+      TM_DB_INIT_MAX_ATTEMPTS: ${TM_DB_INIT_MAX_ATTEMPTS:-25}
+      TM_DB_INIT_RETRY_DELAY_MS: ${TM_DB_INIT_RETRY_DELAY_MS:-1000}
+      PGSSLMODE: disable
+    depends_on:
+      t5memory:
+        condition: service_started
+      tm-db:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  cat-api:
+    build:
+      context: ./cat-api
+    environment:
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET:-changeme-jwt-secret}
+      CAT_DB_URL: ${CAT_DB_URL:-postgresql://${POSTGRES_USER:-tmlite}:${POSTGRES_PASSWORD:-tmlitepass}@tm-db:5432/${POSTGRES_DB:-tmlite}}
+      CAT_UPLOAD_DIR: /data/uploads
+      S3_BUCKET: ${S3_BUCKET:-fastcat-files}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      # Container-to-container endpoint (internal)
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+      # Browser-accessible endpoint for presigned URLs (public)
+      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:9000}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-http://llm-gateway:5005}
+      GLOSSARY_DIR: /app/samples/glossary
+      TM_PROXY_URL: ${TM_PROXY_URL:-http://tm-proxy:3001}
+      APP_AGENT_INTERNAL_SECRET: ${APP_AGENT_INTERNAL_SECRET:-changeme-jwt-secret}
+      PGSSLMODE: disable
+    depends_on:
+      tm-proxy:
+        condition: service_started
+      tm-db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
+    volumes:
+      - cat-data:/data
+      - ./glossaries:/app/samples/glossary:ro
+      
+  llm-gateway:
+    build:
+      context: ./llm-gateway
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LLM_GATEWAY_PORT: 5005
+      LLM_DB_URL: ${CAT_DB_URL:-postgresql://${POSTGRES_USER:-tmlite}:${POSTGRES_PASSWORD:-tmlitepass}@tm-db:5432/${POSTGRES_DB:-tmlite}}
+      JWT_SECRET: ${JWT_SECRET:-changeme-jwt-secret}
+      LLM_GATEWAY_LOCALHOST_BRIDGE: ${LLM_GATEWAY_LOCALHOST_BRIDGE:-host.docker.internal}
+      APP_AGENT_BACKEND_URL: ${APP_AGENT_BACKEND_URL:-http://cat-api:4000}
+      APP_AGENT_INTERNAL_SECRET: ${APP_AGENT_INTERNAL_SECRET:-changeme-jwt-secret}
+      PGSSLMODE: disable
+    depends_on:
+      tm-db:
+        condition: service_healthy
+    ports:
+      - "5005:5005"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    environment:
+      CAT_API_UPSTREAM: http://cat-api:4000
+      TM_PROXY_UPSTREAM: http://tm-proxy:3001
+      LLM_GATEWAY_UPSTREAM: http://llm-gateway:5005
+    depends_on:
+      - tm-proxy
+      - cat-api
+      - llm-gateway
+      - redis
+    ports:
+      - "9991:80"
+    restart: unless-stopped
+
+  tm-backup:
+    image: postgres:15-alpine3.20
+    restart: unless-stopped
+    depends_on:
+      tm-db:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tmlite}
+      POSTGRES_DB: ${POSTGRES_DB:-tmlite}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-tmlitepass}
+      TM_BACKUP_INTERVAL: ${TM_BACKUP_INTERVAL:-86400}
+      PGSSLMODE: disable
+    volumes:
+      - tm-backups:/backups
+    command: >
+      sh -c "
+        until pg_isready -h tm-db -U $${POSTGRES_USER} -d $${POSTGRES_DB}; do
+          echo 'Waiting for tm-db to become ready...';
+          sleep 2;
+        done;
+        while true; do
+          if pg_dump -h tm-db -U $${POSTGRES_USER} $${POSTGRES_DB} > /backups/tm-$$(date +%Y%m%d%H%M).sql; then
+            sleep $${TM_BACKUP_INTERVAL};
+          else
+            echo 'Backup failed; retrying in 10s';
+            sleep 10;
+          fi;
+        done"
+
+volumes:
+  t5mem-data:
+  cat-data:
+  postgres-data:
+  tm-backups:
+  redis-data:
+  minio-data:

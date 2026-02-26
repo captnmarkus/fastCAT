@@ -1,0 +1,43 @@
+{
+  "name": "cat-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/app.ts",
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "test": "node --test --import tsx --test-concurrency=1",
+    "backfill:termbase-xml": "tsx src/scripts/backfill-termbase-xml.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.879.0",
+    "@aws-sdk/s3-request-presigner": "^3.879.0",
+    "@fastify/cors": "^11.1.0",
+    "@fastify/jwt": "^10.0.0",
+    "@fastify/multipart": "^9.3.0",
+    "@fastify/websocket": "^11.2.0",
+    "@xmldom/xmldom": "^0.8.11",
+    "adm-zip": "^0.5.16",
+    "cheerio": "^1.0.0",
+    "fast-xml-parser": "^5.3.2",
+    "fastify": "^5.6.2",
+    "node-fetch": "^3.3.2",
+    "node-html-parser": "^7.0.1",
+    "officeparser": "^5.2.2",
+    "pg": "^8.16.3",
+    "pptxgenjs": "^4.0.1",
+    "redis": "^4.7.0",
+    "sax": "^1.4.4",
+    "xlsx": "^0.18.5",
+    "xpath": "^0.0.34"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
+    "@types/sax": "^1.2.7",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

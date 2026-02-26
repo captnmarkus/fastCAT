@@ -1,0 +1,29 @@
+{
+  "name": "tm-lite-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5173",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.13.12",
+    "bootstrap": "^5.3.8",
+    "bootstrap-icons": "^1.13.1",
+    "flag-icons": "^7.5.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.9.6"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.6",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4",
+    "vitest": "^3.2.4"
+  }
+}

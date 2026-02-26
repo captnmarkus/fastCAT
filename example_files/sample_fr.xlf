@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff version="1.2">
+  <file original="demo.html" source-language="de" target-language="fr" datatype="html">
+    <body>
+      <!-- 1: simple sentence -->
+      <trans-unit id="1">
+        <source>Dies ist ein einfacher Test.</source>
+        <target></target>
+      </trans-unit>
+
+      <!-- 2: inline formatting with <g>…</g> -->
+      <trans-unit id="2">
+        <source>Dieser Text enthält ein <g id="1">wichtiges Wort</g> im Satz.</source>
+        <target></target>
+      </trans-unit>
+
+      <!-- 3: placeholder with <x /> -->
+      <trans-unit id="3">
+        <source>Bitte klicken Sie auf den Button <x id="2"/> um fortzufahren.</source>
+        <target> <x id="2"/></target>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

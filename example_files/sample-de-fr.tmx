@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header
+    creationtool="tm-lite"
+    creationtoolversion="0.1"
+    segtype="sentence"
+    adminlang="fr-FR"
+    srclang="de"
+    datatype="plaintext"
+  />
+  <body>
+
+    <tu>
+      <tuv xml:lang="de">
+        <seg>Dies ist ein einfacher Test.</seg>
+      </tuv>
+      <tuv xml:lang="fr">
+        <seg>Étagère en acier</seg>
+      </tuv>
+    </tu>
+
+
+  </body>
+</tmx>

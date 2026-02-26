@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xhtml xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+  <head>
+    <title>Sample XHTML Snippet</title>
+  </head>
+  <body>
+    <div class="intro">
+      <p>
+        This lightweight snippet lives inside an <code>.xtml</code> container and is ideal for testing
+        structured content workflows.
+      </p>
+    </div>
+    <div class="content">
+      <p>
+        Translators should keep inline tags such as
+        <span class="highlight">emphasis markers</span> intact while adapting each sentence.
+      </p>
+      <p>
+        Remember to review the translated copy and ensure the tone remains friendly and professional.
+      </p>
+    </div>
+  </body>
+</xhtml>
