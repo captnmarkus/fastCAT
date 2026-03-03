@@ -1,8 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 const BASE_URL = String(process.env.FASTCAT_BASE_URL || "http://localhost:9991").replace(/\/$/, "");
 const TM_API_BASE = String(process.env.FASTCAT_TM_BASE || `${BASE_URL}/api`).replace(/\/$/, "");
@@ -40,22 +37,12 @@ async function login() {
 }
 
 function loadSampleFields() {
-  const __filename = fileURLToPath(import.meta.url);
-  const repoRoot = path.resolve(path.dirname(__filename), "..", "..");
-  const xmlPath = path.join(repoRoot, "kk_glossar.xml");
-  const xml = fs.readFileSync(xmlPath, "utf16le");
-
-  const extract = (pattern, fallback) => {
-    const match = xml.match(pattern);
-    return match?.[1]?.trim() || fallback;
-  };
-
   return {
-    category: extract(/<descrip type="Kategorie">([^<]+)<\/descrip>/i, "Kategorie"),
-    productType: extract(/<descrip type="Produkttyp">([^<]+)<\/descrip>/i, "Produkttyp"),
-    feature: extract(/<descrip type="Produkteigenschaft">([^<]+)<\/descrip>/i, "Maßangabe"),
-    explanation: extract(/<descrip type="Erläuterung">([^<]+)<\/descrip>/i, "Erläuterung"),
-    termType: extract(/<descrip type="Typ">([^<]+)<\/descrip>/i, "Typ")
+    category: "Regaltechnik",
+    productType: "Steckregal",
+    feature: "3000 mm",
+    explanation: "Feld fuer Erlaeuterung",
+    termType: "Basisform"
   };
 }
 
@@ -71,13 +58,13 @@ async function createTermbase(token, fields) {
         entry: [
           { name: "Kategorie", type: "picklist", values: [fields.category, "Other"] },
           { name: "Produkttyp", type: "text" },
-          { name: "Erläuterung", type: "text" }
+          { name: "Erlaeuterung", type: "text" }
         ],
         language: [{ name: "Produkteigenschaft", type: "text" }],
         term: [
           { name: "Status", type: "picklist", values: ["Preferred", "Allowed", "Forbidden"] },
-          { name: "Typ", type: "picklist", values: [fields.termType, "Abkürzung"] },
-          { name: "Erläuterung", type: "text" }
+          { name: "Typ", type: "picklist", values: [fields.termType, "Abkuerzung"] },
+          { name: "Erlaeuterung", type: "text" }
         ]
       }
     })
@@ -157,7 +144,7 @@ test("Entry/language/term custom fields merge on patch", async () => {
   const termPatch2 = await requestJson(`${CAT_API_BASE}/terms/${encodeURIComponent(term.termId)}`, {
     method: "PATCH",
     headers: { "content-type": "application/json", ...authHeaders(token) },
-    body: JSON.stringify({ customFields: { "Erläuterung": fields.explanation } })
+    body: JSON.stringify({ customFields: { Erlaeuterung: fields.explanation } })
   });
   assert.equal(termPatch2.res.status, 200, `term patch failed: ${JSON.stringify(termPatch2.payload)}`);
 
@@ -168,5 +155,5 @@ test("Entry/language/term custom fields merge on patch", async () => {
   );
   const updatedTerm = germanAfter?.terms?.find((item) => item.termId === term.termId);
   assert.equal(updatedTerm?.customFields?.Typ, fields.termType);
-  assert.equal(updatedTerm?.customFields?.["Erläuterung"], fields.explanation);
+  assert.equal(updatedTerm?.customFields?.Erlaeuterung, fields.explanation);
 });
