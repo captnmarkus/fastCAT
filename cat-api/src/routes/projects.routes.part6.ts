@@ -178,6 +178,15 @@ export async function registerProjectRoutesPart6(app: FastifyInstance) {
   const RENDERED_PREVIEW_JOB_TTL_MS = 30 * 60 * 1000;
 
   type RenderedPreviewJobStatus = "queued" | "running" | "ready" | "error";
+
+  type OutputSegmentRow = {
+    seg_index: number;
+    src: string;
+    tgt: string | null;
+    src_runs: any;
+    tgt_runs: any;
+    segment_context: any;
+  };
   type RenderedPreviewJob = {
     id: string;
     cacheKey: string;
@@ -420,6 +429,105 @@ export async function registerProjectRoutesPart6(app: FastifyInstance) {
     };
   };
 
+  const loadOutputSegmentsWithTaskFallback = async (params: {
+    projectId: number;
+    fileId: number;
+    taskId: number | null;
+  }): Promise<OutputSegmentRow[]> => {
+    const baseRes = await db.query<OutputSegmentRow>(
+      `SELECT seg_index, src, tgt, src_runs, tgt_runs, segment_context
+       FROM segments
+       WHERE project_id = $1 AND file_id = $2 AND task_id IS NULL
+       ORDER BY seg_index`,
+      [params.projectId, params.fileId]
+    );
+    const baseRows = baseRes.rows;
+
+    if (!params.taskId) {
+      return baseRows;
+    }
+
+    const taskRes = await db.query<OutputSegmentRow>(
+      `SELECT seg_index, src, tgt, src_runs, tgt_runs, segment_context
+       FROM segments
+       WHERE project_id = $1 AND task_id = $2
+       ORDER BY seg_index`,
+      [params.projectId, params.taskId]
+    );
+    const taskRows = taskRes.rows;
+
+    if (taskRows.length === 0) {
+      return baseRows;
+    }
+    if (baseRows.length === 0) {
+      return taskRows;
+    }
+
+    const taskByIndex = new Map<number, OutputSegmentRow>();
+    taskRows.forEach((row) => {
+      taskByIndex.set(Number(row.seg_index), row);
+    });
+
+    const merged: OutputSegmentRow[] = [];
+    baseRows.forEach((baseRow) => {
+      const idx = Number(baseRow.seg_index);
+      const taskRow = taskByIndex.get(idx);
+      if (!taskRow) {
+        merged.push(baseRow);
+        return;
+      }
+
+      const taskTgt = String(taskRow.tgt ?? "").trim();
+      const baseTgt = String(baseRow.tgt ?? "").trim();
+      const mergedSrc = String(taskRow.src ?? "").trim() ? taskRow.src : baseRow.src;
+      const mergedTgt = taskTgt ? taskRow.tgt : baseTgt ? baseRow.tgt : taskRow.tgt ?? baseRow.tgt;
+      const mergedSrcRuns =
+        Array.isArray(taskRow.src_runs) && taskRow.src_runs.length > 0
+          ? taskRow.src_runs
+          : baseRow.src_runs;
+      const mergedTgtRuns = taskTgt
+        ? Array.isArray(taskRow.tgt_runs) && taskRow.tgt_runs.length > 0
+          ? taskRow.tgt_runs
+          : baseRow.tgt_runs
+        : baseTgt
+          ? baseRow.tgt_runs
+          : taskRow.tgt_runs ?? baseRow.tgt_runs;
+      const taskContext =
+        taskRow.segment_context && typeof taskRow.segment_context === "object"
+          ? taskRow.segment_context
+          : null;
+      const baseContext =
+        baseRow.segment_context && typeof baseRow.segment_context === "object"
+          ? baseRow.segment_context
+          : null;
+      const mergedSegmentContext =
+        taskContext && Object.keys(taskContext).length > 0
+          ? baseContext
+            ? { ...baseContext, ...taskContext }
+            : taskContext
+          : baseContext ?? taskContext;
+
+      merged.push({
+        ...taskRow,
+        src: mergedSrc,
+        tgt: mergedTgt,
+        src_runs: mergedSrcRuns,
+        tgt_runs: mergedTgtRuns,
+        segment_context: mergedSegmentContext
+      });
+      taskByIndex.delete(idx);
+    });
+
+    if (taskByIndex.size > 0) {
+      const remaining = Array.from(taskByIndex.values()).sort(
+        (a, b) => Number(a.seg_index) - Number(b.seg_index)
+      );
+      merged.push(...remaining);
+    }
+
+    return merged;
+  };
+
   const computeDraftRevisionId = async (params: { projectId: number; fileId: number; taskId: number | null }) => {
     const revisionRes = params.taskId
       ? await db.query<{ max_version: number; count: number; max_updated_at: string | null }>(
@@ -523,22 +631,11 @@ export async function registerProjectRoutesPart6(app: FastifyInstance) {
     const originalName = String(fileRow.original_name || "").trim() || `file-${params.fileId}`;
     const fileType = String(fileRow.file_type || "").trim().toLowerCase() || resolveUploadFileType(originalName) || "";
     const outputExtension = resolveOutputExtension(originalName, fileRow.file_type);
-    const segmentsRes = params.taskId
-      ? await db.query<{ src: string; tgt: string | null; src_runs: any; tgt_runs: any; segment_context: any }>(
-          `SELECT src, tgt, src_runs, tgt_runs, segment_context
-           FROM segments
-           WHERE project_id = $1 AND task_id = $2
-           ORDER BY seg_index`,
-          [params.projectId, params.taskId]
-        )
-      : await db.query<{ src: string; tgt: string | null; src_runs: any; tgt_runs: any; segment_context: any }>(
-          `SELECT src, tgt, src_runs, tgt_runs, segment_context
-           FROM segments
-           WHERE project_id = $1 AND file_id = $2 AND task_id IS NULL
-           ORDER BY seg_index`,
-          [params.projectId, params.fileId]
-        );
-    const segments = segmentsRes.rows;
+    const segments = await loadOutputSegmentsWithTaskFallback({
+      projectId: params.projectId,
+      fileId: params.fileId,
+      taskId: params.taskId
+    });
     const lines = segments.map(resolveSegmentText);
 
     const warnings: string[] = [];
@@ -978,16 +1075,11 @@ export async function registerProjectRoutesPart6(app: FastifyInstance) {
     const outputFilename = buildTargetFilename(originalName, targetLang, outputExtension);
     const contentType = contentTypeForExtension(outputExtension);
 
-    const segmentsRes = taskId
-      ? await db.query<{ src: string; tgt: string | null; src_runs: any; tgt_runs: any; segment_context: any }>(
-          "SELECT src, tgt, src_runs, tgt_runs, segment_context FROM segments WHERE project_id = $1 AND task_id = $2 ORDER BY seg_index",
-          [projectId, taskId]
-        )
-      : await db.query<{ src: string; tgt: string | null; src_runs: any; tgt_runs: any; segment_context: any }>(
-          "SELECT src, tgt, src_runs, tgt_runs, segment_context FROM segments WHERE project_id = $1 AND file_id = $2 AND task_id IS NULL ORDER BY seg_index",
-          [projectId, fileId]
-        );
-    const segments = segmentsRes.rows;
+    const segments = await loadOutputSegmentsWithTaskFallback({
+      projectId,
+      fileId,
+      taskId
+    });
     const lines = segments.map(resolveSegmentText);
 
     let outBuf: Buffer;

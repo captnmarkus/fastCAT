@@ -233,7 +233,7 @@ test("export target docx applies translations with fallback", async () => {
   const finalize = await finalizeUpload(token, project.id, presign.fileId, fileTypeConfigId);
   assert.equal(finalize.res.status, 200, `finalize failed: ${JSON.stringify(finalize.payload)}`);
 
-  const segRes = await db.query("SELECT id, src FROM segments WHERE file_id = $1 ORDER BY seg_index", [
+  const segRes = await db.query("SELECT id, src FROM segments WHERE file_id = $1 AND task_id IS NULL ORDER BY seg_index", [
     presign.fileId
   ]);
   assert.ok(segRes.rowCount >= 3, `expected >=3 segments, got ${segRes.rowCount}`);
@@ -296,7 +296,7 @@ test("export target xml applies translations with fallback", async () => {
   const finalize = await finalizeUpload(token, project.id, presign.fileId, fileTypeConfigId);
   assert.equal(finalize.res.status, 200, `finalize failed: ${JSON.stringify(finalize.payload)}`);
 
-  const segRes = await db.query("SELECT id, src FROM segments WHERE file_id = $1 ORDER BY seg_index", [
+  const segRes = await db.query("SELECT id, src FROM segments WHERE file_id = $1 AND task_id IS NULL ORDER BY seg_index", [
     presign.fileId
   ]);
   assert.ok(segRes.rowCount >= 3, `expected >=3 segments, got ${segRes.rowCount}`);
