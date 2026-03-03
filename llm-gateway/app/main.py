@@ -7,6 +7,8 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -624,13 +626,15 @@ def _plan_action(text: str, config: AppAgentRuntimeConfig, history: list[dict[st
   raw_lower = raw.lower()
   wizard_context = _extract_wizard_context_from_history(history)
   wizard_active = bool(wizard_context and wizard_context.get("active"))
+  create_intent = _is_create_project_intent(raw)
+  translate_intent = bool(re.search(r"\btranslate|translation\b", raw, re.IGNORECASE))
 
   if not raw:
     if wizard_active and "create_project" in config.enabled_tools:
       return {"mode": "project_wizard"}
     return {
       "mode": "direct",
-      "message": _main_menu_message(),
+      "message": "Do you want to translate a small snippet or create a project?",
     }
 
   if _contains_admin_intent(raw):
@@ -658,7 +662,13 @@ def _plan_action(text: str, config: AppAgentRuntimeConfig, history: list[dict[st
       "message": "Tell me the project ID (for example: project 42 status).",
     }
 
-  if _is_create_project_intent(raw) or wizard_active:
+  if create_intent and translate_intent and not wizard_active:
+    return {
+      "mode": "direct",
+      "message": "Do you want to translate a small snippet or create a project?",
+    }
+
+  if create_intent or wizard_active:
     if "create_project" not in config.enabled_tools:
       return {
         "mode": "direct",
@@ -715,7 +725,7 @@ def _plan_action(text: str, config: AppAgentRuntimeConfig, history: list[dict[st
 
   return {
     "mode": "direct",
-    "message": _main_menu_message(),
+    "message": "Do you want to translate a small snippet or create a project?",
   }
 
 
@@ -808,36 +818,83 @@ def _normalize_project_wizard_state(raw: dict[str, Any] | None) -> dict[str, Any
   if not isinstance(raw_file_ids, list):
     raw_file_ids = []
   file_ids = _dedupe_positive_ints([int(v) for v in raw_file_ids if str(v).isdigit()])
+  file_names_raw = raw.get("file_names") if isinstance(raw.get("file_names"), dict) else {}
+  file_names = {str(k): str(v) for k, v in file_names_raw.items() if str(k).strip() and str(v).strip()}
   source_lang = _normalize_lang_tag(str(raw.get("source_lang") or "")) if raw.get("source_lang") else None
   target_langs = _normalize_lang_list(raw.get("target_langs") or [])
   if source_lang:
     target_langs = [entry for entry in target_langs if entry != source_lang]
-  project_name = str(raw.get("name") or "").strip() or None
-  template_id = None
+  due_at = str(raw.get("due_at") or "").strip() or None
+  owner_user_id = None
+  translation_engine_id = None
+  ruleset_id = None
+  tmx_id = None
+  termbase_id = None
   try:
-    template_id_raw = raw.get("template_id")
-    if template_id_raw is not None:
-      template_id_val = int(template_id_raw)
-      if template_id_val > 0:
-        template_id = template_id_val
+    owner_user_id_raw = raw.get("owner_user_id")
+    if owner_user_id_raw is not None:
+      owner_user_id_val = int(owner_user_id_raw)
+      if owner_user_id_val > 0:
+        owner_user_id = owner_user_id_val
   except Exception:
-    template_id = None
-  template_name = str(raw.get("template_name") or "").strip() or None
+    owner_user_id = None
+  try:
+    engine_raw = raw.get("translation_engine_id")
+    if engine_raw is not None:
+      engine_val = int(engine_raw)
+      if engine_val > 0:
+        translation_engine_id = engine_val
+  except Exception:
+    translation_engine_id = None
+  try:
+    rules_raw = raw.get("ruleset_id")
+    if rules_raw is not None:
+      rules_val = int(rules_raw)
+      if rules_val > 0:
+        ruleset_id = rules_val
+  except Exception:
+    ruleset_id = None
+  try:
+    tmx_raw = raw.get("tmx_id")
+    if tmx_raw is not None:
+      tmx_val = int(tmx_raw)
+      if tmx_val > 0:
+        tmx_id = tmx_val
+  except Exception:
+    tmx_id = None
+  try:
+    termbase_raw = raw.get("termbase_id")
+    if termbase_raw is not None:
+      termbase_val = int(termbase_raw)
+      if termbase_val > 0:
+        termbase_id = termbase_val
+  except Exception:
+    termbase_id = None
+  owner_username = str(raw.get("owner_username") or "").strip() or None
 
   return {
     "file_ids": file_ids,
+    "file_names": file_names,
     "source_lang": source_lang,
     "target_langs": target_langs,
-    "name": project_name,
-    "template_id": template_id,
-    "template_name": template_name,
-    "template_done": bool(raw.get("template_done", False)),
-    "template_prompted": bool(raw.get("template_prompted", False)),
+    "due_at": due_at,
+    "due_done": bool(raw.get("due_done", False)),
+    "owner_user_id": owner_user_id,
+    "owner_username": owner_username,
+    "assignment_done": bool(raw.get("assignment_done", False)),
+    "translation_engine_id": translation_engine_id,
+    "engine_done": bool(raw.get("engine_done", False)),
+    "ruleset_id": ruleset_id,
+    "rules_done": bool(raw.get("rules_done", False)),
+    "tmx_id": tmx_id,
+    "tmx_done": bool(raw.get("tmx_done", False)),
+    "termbase_id": termbase_id,
+    "termbase_done": bool(raw.get("termbase_done", False)),
     "awaiting_confirm": bool(raw.get("awaiting_confirm", False)),
   }
 
 
-def _extract_lang_mentions(text: str, allowed_languages: set[str]) -> list[str]:
+def _extract_lang_mentions(text: str, allowed_languages: set[str] | None = None) -> list[str]:
   matches = re.findall(r"\b[a-z]{2,3}(?:-[a-z0-9]{2,8})?\b", str(text or "").lower())
   out: list[str] = []
   seen: set[str] = set()
@@ -862,58 +919,141 @@ def _is_cancel_intent(text: str) -> bool:
   return bool(re.search(r"\b(cancel|stop|never mind|abort)\b", str(text or ""), re.IGNORECASE))
 
 
-def _is_skip_template_intent(text: str) -> bool:
-  return bool(re.search(r"\b(skip|no template|without template|none)\b", str(text or ""), re.IGNORECASE))
+def _is_skip_choice(text: str) -> bool:
+  return bool(re.search(r"^\s*(skip|none|no|not now|n/a|nope)\s*$", str(text or ""), re.IGNORECASE))
 
 
-def _looks_like_plain_project_name(text: str) -> bool:
-  normalized = str(text or "").strip()
-  if len(normalized) < 3 or len(normalized) > 80:
-    return False
-  if re.search(r"^\s*(skip|none|no|cancel|stop|confirm|create|yes|ok|okay)\s*$", normalized, re.IGNORECASE):
-    return False
-  if re.search(r"\b(file|files|source|target|language|template|create|upload|id)\b", normalized, re.IGNORECASE):
-    return False
-  if re.search(r"[^a-z0-9 _.\-]", normalized, re.IGNORECASE):
-    return False
-  return True
+def _is_default_choice(text: str) -> bool:
+  return bool(re.search(r"^\s*(default|auto|recommended)\s*$", str(text or ""), re.IGNORECASE))
 
 
-def _extract_template_choice(raw_text: str, templates: list[dict[str, Any]]) -> dict[str, Any]:
+def _parse_option_choice(
+  raw_text: str,
+  options: list[dict[str, Any]],
+  *,
+  label_keys: tuple[str, ...] = ("name", "label"),
+) -> dict[str, Any]:
   text = str(raw_text or "").strip()
   if not text:
     return {"action": "none"}
-  if _is_skip_template_intent(text):
+  if _is_skip_choice(text):
     return {"action": "skip"}
+  if _is_default_choice(text):
+    return {"action": "default"}
 
-  id_match = re.search(r"\btemplate\s*#?\s*(\d+)\b", text, re.IGNORECASE)
+  id_match = re.search(r"\b(?:id|#)\s*(\d+)\b", text, re.IGNORECASE)
   if not id_match:
     id_match = re.search(r"^\s*(\d+)\s*$", text)
   if id_match:
     try:
-      template_id = int(id_match.group(1))
-      if template_id > 0:
-        for template in templates:
+      selected_id = int(id_match.group(1))
+      if selected_id > 0:
+        for option in options:
           try:
-            if int(template.get("id")) == template_id:
-              return {"action": "select", "id": template_id, "name": str(template.get("name") or "")}
+            if int(option.get("id")) == selected_id:
+              return {"action": "select", "id": selected_id}
           except Exception:
             continue
     except Exception:
       pass
 
   lowered = text.lower()
-  for template in templates:
-    name = str(template.get("name") or "").strip()
-    if not name:
+  for option in options:
+    labels = [str(option.get(key) or "").strip() for key in label_keys]
+    labels = [entry for entry in labels if entry]
+    if not labels:
       continue
-    normalized_name = name.lower()
-    if normalized_name in lowered or lowered in normalized_name:
+    if any(label.lower() in lowered or lowered in label.lower() for label in labels):
       try:
-        return {"action": "select", "id": int(template.get("id")), "name": name}
+        return {"action": "select", "id": int(option.get("id"))}
       except Exception:
-        return {"action": "select", "id": None, "name": name}
+        continue
   return {"action": "none"}
+
+
+def _parse_assignee_choice(raw_text: str, users: list[dict[str, Any]]) -> dict[str, Any]:
+  text = str(raw_text or "").strip()
+  if not text:
+    return {"action": "none"}
+  if _is_skip_choice(text) or _is_default_choice(text):
+    return {"action": "default"}
+  if re.search(r"\b(me|myself|self)\b", text, re.IGNORECASE):
+    return {"action": "self"}
+  return _parse_option_choice(text, users, label_keys=("username", "name"))
+
+
+def _resource_label_by_id(options: list[dict[str, Any]], value: int | None) -> str | None:
+  if value is None:
+    return None
+  for option in options:
+    try:
+      option_id = int(option.get("id"))
+    except Exception:
+      continue
+    if option_id != value:
+      continue
+    label = str(option.get("name") or option.get("label") or "").strip()
+    return label or str(option_id)
+  return None
+
+
+def _language_alternatives(requested: str, enabled_languages: list[str]) -> list[str]:
+  requested_norm = _normalize_lang_tag(requested) or requested
+  if not requested_norm:
+    return enabled_languages[:3]
+  primary = requested_norm.split("-")[0]
+  by_primary = [
+    entry for entry in enabled_languages if (entry.split("-")[0] == primary and entry != requested_norm)
+  ]
+  if by_primary:
+    return by_primary[:3]
+  by_prefix = [entry for entry in enabled_languages if entry.startswith(requested_norm[:2])]
+  return by_prefix[:3] if by_prefix else enabled_languages[:3]
+
+
+def _parse_due_at_text(text: str) -> dict[str, Any]:
+  raw = str(text or "").strip()
+  if not raw:
+    return {"status": "none", "iso": None}
+  if _is_skip_choice(raw):
+    return {"status": "skip", "iso": None}
+
+  now_local = datetime.now().astimezone()
+  local_tz = now_local.tzinfo
+  lowered = raw.lower()
+  if lowered in {"today", "end of day", "eod"}:
+    dt = now_local.replace(hour=23, minute=59, second=59, microsecond=0)
+    return {"status": "ok", "iso": dt.isoformat()}
+  if lowered in {"tomorrow"}:
+    dt = (now_local + timedelta(days=1)).replace(hour=23, minute=59, second=59, microsecond=0)
+    return {"status": "ok", "iso": dt.isoformat()}
+
+  date_only_match = re.match(r"^\s*(\d{4})[-/](\d{2})[-/](\d{2})\s*$", raw)
+  if date_only_match:
+    try:
+      year = int(date_only_match.group(1))
+      month = int(date_only_match.group(2))
+      day = int(date_only_match.group(3))
+      dt = datetime(year, month, day, 23, 59, 59, tzinfo=local_tz)
+      return {"status": "ok", "iso": dt.isoformat()}
+    except Exception:
+      return {"status": "invalid", "iso": None}
+
+  parsed_dt: datetime | None = None
+  try:
+    parsed_dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+  except Exception:
+    parsed_dt = None
+  if parsed_dt is None:
+    try:
+      parsed_dt = parsedate_to_datetime(raw)
+    except Exception:
+      parsed_dt = None
+  if parsed_dt is None:
+    return {"status": "invalid", "iso": None}
+  if parsed_dt.tzinfo is None:
+    parsed_dt = parsed_dt.replace(tzinfo=local_tz)
+  return {"status": "ok", "iso": parsed_dt.isoformat()}
 
 
 async def _fetch_project_wizard_options(
@@ -990,13 +1130,16 @@ def _wizard_content_json(state: dict[str, Any], *, active: bool, step: str) -> d
 def _build_wizard_help_message(options: dict[str, Any]) -> tuple[str, dict[str, Any]]:
   configurable = options.get("configurable") if isinstance(options.get("configurable"), dict) else {}
   file_types = configurable.get("fileTypes") if isinstance(configurable.get("fileTypes"), list) else []
-  templates = configurable.get("projectTemplates") if isinstance(configurable.get("projectTemplates"), list) else []
   engines = configurable.get("translationEngines") if isinstance(configurable.get("translationEngines"), list) else []
   rulesets = configurable.get("rulesets") if isinstance(configurable.get("rulesets"), list) else []
-  glossaries = configurable.get("glossaries") if isinstance(configurable.get("glossaries"), list) else []
+  tmx_entries = configurable.get("tmx") if isinstance(configurable.get("tmx"), list) else []
+  termbases = configurable.get("termbases") if isinstance(configurable.get("termbases"), list) else []
+  assignment_cfg = configurable.get("assignment") if isinstance(configurable.get("assignment"), dict) else {}
+  notices = configurable.get("notices") if isinstance(configurable.get("notices"), list) else []
   lang_cfg = _extract_workspace_languages(options)
   source_default = lang_cfg.get("default_source")
   target_defaults = lang_cfg.get("default_targets") if isinstance(lang_cfg.get("default_targets"), list) else []
+  can_assign_others = bool(assignment_cfg.get("canAssignOthers"))
 
   file_type_parts: list[str] = []
   for entry in file_types[:6]:
@@ -1008,26 +1151,15 @@ def _build_wizard_help_message(options: dict[str, Any]) -> tuple[str, dict[str, 
     if file_type and ext_text:
       file_type_parts.append(f"{file_type.upper()} ({ext_text})")
 
-  template_parts: list[str] = []
-  for entry in templates[:3]:
-    if not isinstance(entry, dict):
-      continue
-    template_id = entry.get("id")
-    template_name = str(entry.get("name") or "").strip()
-    src = _normalize_lang_tag(str(entry.get("sourceLang") or ""))
-    targets = _normalize_lang_list(entry.get("targetLangs") or [])
-    if template_name:
-      lang_part = f"{src} -> {', '.join(targets)}" if src and targets else "languages configurable"
-      template_parts.append(f"#{template_id} {template_name} ({lang_part})")
-
   lines = [
-    "Project wizard configuration includes:",
-    "1) Optional project template",
-    "2) Source language and target languages",
-    "3) Files + file type configurations",
-    "4) Translation assignments",
-    "5) TMX, translation engine, ruleset, and glossary settings",
-    "6) Final review and create",
+    "Project wizard uses configured settings (no project templates):",
+    "1) Files (required)",
+    "2) Target languages (required)",
+    "3) Due date/time (optional)",
+    "4) Owner/assignee (role-based)",
+    "5) Translation engine (required)",
+    "6) Ruleset, TMX, and termbase (optional)",
+    "7) Summary + confirmation",
   ]
   if source_default:
     lines.append(f"Default source language: {source_default}")
@@ -1035,9 +1167,20 @@ def _build_wizard_help_message(options: dict[str, Any]) -> tuple[str, dict[str, 
     lines.append(f"Default target languages: {', '.join(target_defaults)}")
   if file_type_parts:
     lines.append(f"Configured file types: {'; '.join(file_type_parts)}")
-  if template_parts:
-    lines.append(f"Available templates: {'; '.join(template_parts)}")
-  lines.append(f"Enabled engines: {len(engines)} | rulesets: {len(rulesets)} | glossaries: {len(glossaries)}")
+  lines.append(
+    f"Engines: {len(engines)} | rulesets: {len(rulesets)} | TMX: {len(tmx_entries)} | termbases: {len(termbases)}"
+  )
+  lines.append(
+    "Assignment: managers/admins can assign others; all other roles are self-assigned."
+    if can_assign_others
+    else "Assignment: this role is self-assigned."
+  )
+  for notice in notices[:4]:
+    if not isinstance(notice, dict):
+      continue
+    message = str(notice.get("message") or "").strip()
+    if message:
+      lines.append(f"Notice: {message}")
   lines.append("If you want, I can start a guided project setup now and ask one step at a time.")
 
   return "\n".join(lines), _wizard_content_json(
@@ -1045,6 +1188,49 @@ def _build_wizard_help_message(options: dict[str, Any]) -> tuple[str, dict[str, 
     active=False,
     step="capabilities",
   )
+
+
+async def _describe_wizard_files(
+  request: Request,
+  *,
+  trace_id: str | None,
+  user_context: AppAgentUserContext,
+  file_ids: list[int],
+) -> tuple[dict[int, str], str | None]:
+  if not file_ids:
+    return {}, None
+  try:
+    payload = await _call_backend_tool(
+      request,
+      path="/api/chat/internal/tools/describe-files",
+      payload={
+        "userContext": {
+          "userId": user_context.user_id,
+          "username": user_context.username,
+          "role": user_context.role,
+          "departmentId": user_context.department_id,
+        },
+        "args": {"file_ids": file_ids},
+      },
+      trace_id=trace_id,
+    )
+  except AgentToolError as exc:
+    return {}, str(exc)
+
+  files = payload.get("files") if isinstance(payload.get("files"), list) else []
+  out: dict[int, str] = {}
+  for row in files:
+    if not isinstance(row, dict):
+      continue
+    try:
+      file_id = int(row.get("fileId"))
+    except Exception:
+      continue
+    if file_id <= 0:
+      continue
+    filename = str(row.get("filename") or "").strip() or f"file #{file_id}"
+    out[file_id] = filename
+  return out, None
 
 
 async def _resolve_project_wizard_plan(
@@ -1057,9 +1243,23 @@ async def _resolve_project_wizard_plan(
 ) -> dict[str, Any]:
   options = await _fetch_project_wizard_options(request, trace_id=trace_id, user_context=user_context)
   configurable = options.get("configurable") if isinstance(options.get("configurable"), dict) else {}
-  templates_raw = configurable.get("projectTemplates") if isinstance(configurable.get("projectTemplates"), list) else []
-  templates = [entry for entry in templates_raw if isinstance(entry, dict)]
   file_types_raw = configurable.get("fileTypes") if isinstance(configurable.get("fileTypes"), list) else []
+  assignment_cfg = configurable.get("assignment") if isinstance(configurable.get("assignment"), dict) else {}
+  engines_raw = configurable.get("translationEngines") if isinstance(configurable.get("translationEngines"), list) else []
+  rulesets_raw = configurable.get("rulesets") if isinstance(configurable.get("rulesets"), list) else []
+  tmx_raw = configurable.get("tmx") if isinstance(configurable.get("tmx"), list) else []
+  termbases_raw = configurable.get("termbases") if isinstance(configurable.get("termbases"), list) else []
+  defaults_cfg = configurable.get("defaults") if isinstance(configurable.get("defaults"), dict) else {}
+  availability_cfg = configurable.get("availability") if isinstance(configurable.get("availability"), dict) else {}
+
+  assignable_users = [entry for entry in assignment_cfg.get("assignableUsers", []) if isinstance(entry, dict)]
+  default_owner = assignment_cfg.get("defaultOwner") if isinstance(assignment_cfg.get("defaultOwner"), dict) else {}
+  can_assign_others = bool(assignment_cfg.get("canAssignOthers"))
+  engines = [entry for entry in engines_raw if isinstance(entry, dict)]
+  rulesets = [entry for entry in rulesets_raw if isinstance(entry, dict)]
+  tmx_entries = [entry for entry in tmx_raw if isinstance(entry, dict)]
+  termbases = [entry for entry in termbases_raw if isinstance(entry, dict)]
+
   file_type_summaries: list[str] = []
   for entry in file_types_raw:
     if not isinstance(entry, dict):
@@ -1071,14 +1271,23 @@ async def _resolve_project_wizard_plan(
       file_type_summaries.append(f"{file_type}: {ext_text}")
 
   language_cfg = _extract_workspace_languages(options)
-  allowed_languages = set(language_cfg.get("enabled") if isinstance(language_cfg.get("enabled"), list) else [])
+  enabled_languages = language_cfg.get("enabled") if isinstance(language_cfg.get("enabled"), list) else []
+  allowed_languages = set(enabled_languages)
   default_source = language_cfg.get("default_source")
   default_targets = language_cfg.get("default_targets") if isinstance(language_cfg.get("default_targets"), list) else []
-  default_project_name = f"Project {time.strftime('%Y-%m-%d')}"
+  default_engine_id = int(defaults_cfg.get("translationEngineId")) if str(defaults_cfg.get("translationEngineId") or "").isdigit() else None
+  default_ruleset_id = int(defaults_cfg.get("rulesetId")) if str(defaults_cfg.get("rulesetId") or "").isdigit() else None
+  default_owner_id = int(defaults_cfg.get("ownerUserId")) if str(defaults_cfg.get("ownerUserId") or "").isdigit() else None
 
   wizard_context = _extract_wizard_context_from_history(history)
   prev_state_raw = wizard_context.get("state") if isinstance(wizard_context, dict) else None
   state = _normalize_project_wizard_state(prev_state_raw if isinstance(prev_state_raw, dict) else None)
+  if not state.get("source_lang"):
+    state["source_lang"] = default_source
+  if not state.get("owner_user_id") and default_owner_id:
+    state["owner_user_id"] = default_owner_id
+  if not state.get("owner_username"):
+    state["owner_username"] = str(default_owner.get("username") or user_context.username)
 
   raw = str(last_user_text or "").strip()
   if _is_cancel_intent(raw):
@@ -1089,6 +1298,7 @@ async def _resolve_project_wizard_plan(
     }
 
   state_changed = False
+  current_step = str(wizard_context.get("step") if wizard_context else "").strip().lower()
 
   incoming_file_ids = _extract_file_ids(raw)
   if incoming_file_ids:
@@ -1096,92 +1306,254 @@ async def _resolve_project_wizard_plan(
     if merged_ids != state["file_ids"]:
       state["file_ids"] = merged_ids
       state_changed = True
-
-  current_step = str(wizard_context.get("step") if wizard_context else "").strip().lower()
-
-  parsed_source = _extract_source_lang(raw)
-  if not parsed_source:
-    lang_mentions = _extract_lang_mentions(raw, allowed_languages)
-    if current_step == "source_language" and lang_mentions:
-      parsed_source = lang_mentions[0]
-    elif re.search(r"\bsource\b", raw, re.IGNORECASE) and lang_mentions:
-      parsed_source = lang_mentions[0]
-    elif current_step == "source_language" and re.search(r"\b(skip|auto|default|detect)\b", raw, re.IGNORECASE):
-      parsed_source = str(default_source or "")
-  if parsed_source and parsed_source != state["source_lang"]:
-    state["source_lang"] = parsed_source
-    state_changed = True
-
-  parsed_targets = _extract_target_langs(raw)
-  if not parsed_targets:
-    lang_mentions = _extract_lang_mentions(raw, allowed_languages)
-    if lang_mentions and (re.search(r"\btarget\b", raw, re.IGNORECASE) or str(wizard_context.get("step") if wizard_context else "") == "target_languages"):
-      parsed_targets = lang_mentions
-  if parsed_targets:
-    filtered_targets = []
-    for entry in parsed_targets:
-      normalized = _normalize_lang_tag(entry)
-      if not normalized:
-        continue
-      if state["source_lang"] and normalized == state["source_lang"]:
-        continue
-      if normalized in filtered_targets:
-        continue
-      filtered_targets.append(normalized)
-    if filtered_targets and filtered_targets != state["target_langs"]:
-      state["target_langs"] = filtered_targets
+  file_describe_error: str | None = None
+  if state["file_ids"] and (state_changed or not state.get("file_names")):
+    described, describe_error = await _describe_wizard_files(
+      request,
+      trace_id=trace_id,
+      user_context=user_context,
+      file_ids=state["file_ids"],
+    )
+    if describe_error:
+      file_describe_error = describe_error
+    if described:
+      state["file_names"] = {str(file_id): name for file_id, name in described.items()}
       state_changed = True
 
-  if state["source_lang"] and state["target_langs"]:
+  source_error: str | None = None
+  parsed_source = _extract_source_lang(raw)
+  if parsed_source:
+    if allowed_languages and parsed_source not in allowed_languages:
+      source_error = f"Source language `{parsed_source}` is not enabled. Ask a manager/admin to enable it."
+    elif parsed_source != state.get("source_lang"):
+      state["source_lang"] = parsed_source
+      state_changed = True
+
+  target_error: str | None = None
+  invalid_target_langs: list[str] = []
+  parsed_targets = _extract_target_langs(raw)
+  if not parsed_targets and (current_step == "target_languages" or re.search(r"\b(?:target|targets?)\b", raw, re.IGNORECASE)):
+    parsed_targets = _extract_lang_mentions(raw, None)
+  if parsed_targets:
+    normalized_targets: list[str] = []
+    for entry in parsed_targets:
+      normalized = _normalize_lang_tag(entry)
+      if not normalized or normalized in normalized_targets:
+        continue
+      normalized_targets.append(normalized)
+
+    valid_targets: list[str] = []
+    for target in normalized_targets:
+      if allowed_languages and target not in allowed_languages:
+        invalid_target_langs.append(target)
+        continue
+      if state.get("source_lang") and target == state.get("source_lang"):
+        continue
+      valid_targets.append(target)
+
+    if valid_targets and valid_targets != state["target_langs"]:
+      state["target_langs"] = valid_targets
+      state_changed = True
+    if invalid_target_langs and not valid_targets:
+      primary = invalid_target_langs[0]
+      alternatives = _language_alternatives(primary, enabled_languages)
+      alt_text = f" Suggested alternatives: {', '.join(alternatives)}." if alternatives else ""
+      target_error = f"Language `{primary}` is not enabled.{alt_text} A manager/admin can enable it in Language Settings."
+
+  if state.get("source_lang") and state.get("target_langs"):
     filtered_existing = [entry for entry in state["target_langs"] if entry != state["source_lang"]]
     if filtered_existing != state["target_langs"]:
       state["target_langs"] = filtered_existing
       state_changed = True
 
-  parsed_name = _extract_project_name(raw)
-  if not parsed_name and current_step == "project_name":
-    if _looks_like_plain_project_name(raw):
-      parsed_name = raw.strip()
-    elif re.search(r"\b(skip|default|auto)\b", raw, re.IGNORECASE):
-      parsed_name = default_project_name
-  if parsed_name and parsed_name != state["name"]:
-    state["name"] = parsed_name
-    state_changed = True
+  due_error: str | None = None
+  if current_step == "due_date" or re.search(r"\bdue\b", raw, re.IGNORECASE):
+    due_parsed = _parse_due_at_text(raw)
+    if due_parsed["status"] == "ok":
+      due_iso = str(due_parsed.get("iso") or "").strip()
+      if due_iso != state.get("due_at"):
+        state["due_at"] = due_iso
+        state_changed = True
+      if not state.get("due_done"):
+        state["due_done"] = True
+        state_changed = True
+    elif due_parsed["status"] == "skip":
+      if state.get("due_at") is not None:
+        state["due_at"] = None
+        state_changed = True
+      if not state.get("due_done"):
+        state["due_done"] = True
+        state_changed = True
+    elif due_parsed["status"] == "invalid":
+      due_error = "I could not parse that date/time. Please share an ISO-like date/time, or `skip`."
 
-  template_choice = {"action": "none"}
-  if current_step == "template" or re.search(r"\btemplate\b", raw, re.IGNORECASE):
-    template_choice = _extract_template_choice(raw, templates)
-  if template_choice.get("action") == "select":
-    template_id = template_choice.get("id")
-    template_name = str(template_choice.get("name") or "").strip() or None
-    if template_id and template_id != state["template_id"]:
-      state["template_id"] = int(template_id)
+  assignment_error: str | None = None
+  assignment_restriction_message: str | None = None
+  if can_assign_others:
+    if current_step == "assignment" or re.search(r"\b(assign|owner|assignee)\b", raw, re.IGNORECASE):
+      choice = _parse_assignee_choice(raw, assignable_users)
+      if choice.get("action") in {"default", "self"}:
+        selected_owner_id = default_owner_id or user_context.user_id
+        selected_owner_name = str(default_owner.get("username") or user_context.username)
+        if state.get("owner_user_id") != selected_owner_id:
+          state["owner_user_id"] = selected_owner_id
+          state_changed = True
+        if selected_owner_name and state.get("owner_username") != selected_owner_name:
+          state["owner_username"] = selected_owner_name
+          state_changed = True
+        if not state.get("assignment_done"):
+          state["assignment_done"] = True
+          state_changed = True
+      elif choice.get("action") == "select":
+        selected_id = int(choice.get("id"))
+        selected_user = next((entry for entry in assignable_users if int(entry.get("userId", 0)) == selected_id), None)
+        if selected_user:
+          selected_username = str(selected_user.get("username") or "").strip()
+          if state.get("owner_user_id") != selected_id:
+            state["owner_user_id"] = selected_id
+            state_changed = True
+          if selected_username and state.get("owner_username") != selected_username:
+            state["owner_username"] = selected_username
+            state_changed = True
+          if not state.get("assignment_done"):
+            state["assignment_done"] = True
+            state_changed = True
+      elif raw and current_step == "assignment":
+        assignment_error = "Please choose a user by ID or username from the assignable list."
+  else:
+    if re.search(r"\b(assign|owner|assignee)\b", raw, re.IGNORECASE) and not re.search(
+      r"\b(me|myself|self)\b", raw, re.IGNORECASE
+    ):
+      assignment_restriction_message = (
+        "Only managers/admins can assign projects to other users. I'll create it for you, or ask a manager/admin to create/assign it."
+      )
+    if state.get("owner_user_id") != user_context.user_id:
+      state["owner_user_id"] = user_context.user_id
       state_changed = True
-    if template_name and template_name != state["template_name"]:
-      state["template_name"] = template_name
+    if state.get("owner_username") != user_context.username:
+      state["owner_username"] = user_context.username
       state_changed = True
-    if not state["template_done"]:
-      state["template_done"] = True
+    if not state.get("assignment_done"):
+      state["assignment_done"] = True
       state_changed = True
-  elif template_choice.get("action") == "skip":
-    if state["template_id"] is not None:
-      state["template_id"] = None
-      state_changed = True
-    if state["template_name"] is not None:
-      state["template_name"] = None
-      state_changed = True
-    if not state["template_done"]:
-      state["template_done"] = True
-      state_changed = True
+
+  engine_error: str | None = None
+  has_engines = bool(availability_cfg.get("hasEngines", len(engines) > 0))
+  if has_engines and (current_step == "translation_engine" or re.search(r"\bengine\b", raw, re.IGNORECASE)):
+    choice = _parse_option_choice(raw, engines)
+    if choice.get("action") == "select":
+      selected_engine_id = int(choice.get("id"))
+      if state.get("translation_engine_id") != selected_engine_id:
+        state["translation_engine_id"] = selected_engine_id
+        state_changed = True
+      if not state.get("engine_done"):
+        state["engine_done"] = True
+        state_changed = True
+    elif choice.get("action") in {"default", "skip"}:
+      fallback_engine_id = default_engine_id
+      if fallback_engine_id is None and engines:
+        fallback_engine_id = int(engines[0].get("id"))
+      if fallback_engine_id is None:
+        engine_error = (
+          "No translation engine is configured/enabled for your account/project scope. A manager/admin can enable it for you."
+        )
+      else:
+        if state.get("translation_engine_id") != fallback_engine_id:
+          state["translation_engine_id"] = fallback_engine_id
+          state_changed = True
+        if not state.get("engine_done"):
+          state["engine_done"] = True
+          state_changed = True
+    elif raw and current_step == "translation_engine":
+      engine_error = "Please choose a translation engine by ID or name."
+  if not has_engines:
+    state["engine_done"] = False
+
+  rules_error: str | None = None
+  if rulesets and (current_step == "ruleset" or re.search(r"\b(?:rules?|ruleset)\b", raw, re.IGNORECASE)):
+    choice = _parse_option_choice(raw, rulesets)
+    if choice.get("action") == "select":
+      selected_ruleset_id = int(choice.get("id"))
+      if state.get("ruleset_id") != selected_ruleset_id:
+        state["ruleset_id"] = selected_ruleset_id
+        state_changed = True
+      if not state.get("rules_done"):
+        state["rules_done"] = True
+        state_changed = True
+    elif choice.get("action") in {"skip", "none"}:
+      if state.get("ruleset_id") is not None:
+        state["ruleset_id"] = None
+        state_changed = True
+      if not state.get("rules_done"):
+        state["rules_done"] = True
+        state_changed = True
+    elif choice.get("action") == "default":
+      resolved_ruleset = default_ruleset_id if default_ruleset_id is not None else int(rulesets[0].get("id"))
+      if state.get("ruleset_id") != resolved_ruleset:
+        state["ruleset_id"] = resolved_ruleset
+        state_changed = True
+      if not state.get("rules_done"):
+        state["rules_done"] = True
+        state_changed = True
+    elif raw and current_step == "ruleset":
+      rules_error = "Please choose a ruleset by ID or name, or `skip`."
+
+  tmx_error: str | None = None
+  if tmx_entries and (current_step == "tmx" or re.search(r"\b(?:tmx|tm)\b", raw, re.IGNORECASE)):
+    choice = _parse_option_choice(raw, tmx_entries)
+    if choice.get("action") == "select":
+      selected_tmx_id = int(choice.get("id"))
+      if state.get("tmx_id") != selected_tmx_id:
+        state["tmx_id"] = selected_tmx_id
+        state_changed = True
+      if not state.get("tmx_done"):
+        state["tmx_done"] = True
+        state_changed = True
+    elif choice.get("action") in {"skip", "none", "default"}:
+      if state.get("tmx_id") is not None:
+        state["tmx_id"] = None
+        state_changed = True
+      if not state.get("tmx_done"):
+        state["tmx_done"] = True
+        state_changed = True
+    elif raw and current_step == "tmx":
+      tmx_error = "Please choose a TMX by ID, or `skip` for none."
+
+  termbase_error: str | None = None
+  if termbases and (current_step == "termbase" or re.search(r"\btermbase|glossary|terminology\b", raw, re.IGNORECASE)):
+    choice = _parse_option_choice(raw, termbases, label_keys=("label", "name"))
+    if choice.get("action") == "select":
+      selected_termbase_id = int(choice.get("id"))
+      if state.get("termbase_id") != selected_termbase_id:
+        state["termbase_id"] = selected_termbase_id
+        state_changed = True
+      if not state.get("termbase_done"):
+        state["termbase_done"] = True
+        state_changed = True
+    elif choice.get("action") in {"skip", "none", "default"}:
+      if state.get("termbase_id") is not None:
+        state["termbase_id"] = None
+        state_changed = True
+      if not state.get("termbase_done"):
+        state["termbase_done"] = True
+        state_changed = True
+    elif raw and current_step == "termbase":
+      termbase_error = "Please choose a termbase by ID, or `skip` for none."
 
   if state_changed:
     state["awaiting_confirm"] = False
 
+  if file_describe_error:
+    return {
+      "mode": "direct",
+      "message": f"{file_describe_error}\nProjects require at least one file. Please upload/select a file first.",
+      "content_json": _wizard_content_json(state, active=True, step="files"),
+    }
+
   if not state["file_ids"]:
     message_parts = [
-      "Step 1/6 (Required): choose one or more files.",
-      "What this does: selects the uploaded files that will be segmented into the new project.",
-      "Use + to upload files if needed, then share the file IDs.",
+      "Projects require at least one file. Please upload/select a file first.",
+      "Share one or more file IDs to continue.",
     ]
     if file_type_summaries:
       message_parts.append("Configured upload types: " + "; ".join(file_type_summaries))
@@ -1192,60 +1564,199 @@ async def _resolve_project_wizard_plan(
       "content_json": _wizard_content_json(state, active=True, step="files"),
     }
 
-  if not state["source_lang"]:
-    hint = f" Suggested default: {default_source}." if default_source else ""
+  if source_error:
     return {
       "mode": "direct",
-      "message": f"Step 2/6 (Optional): source language.{hint} Reply with a language code (for example `en`), or `skip` to use default/auto-detect behavior.",
-      "content_json": _wizard_content_json(state, active=True, step="source_language"),
+      "message": source_error,
+      "content_json": _wizard_content_json(state, active=True, step="target_languages"),
+    }
+
+  if target_error:
+    return {
+      "mode": "direct",
+      "message": target_error,
+      "content_json": _wizard_content_json(state, active=True, step="target_languages"),
     }
 
   if not state["target_langs"]:
     hint = f" Suggested targets: {', '.join(default_targets)}." if default_targets else ""
     return {
       "mode": "direct",
-      "message": f"Step 3/6 (Required): target language(s). What this does: creates one task per target language for each selected file.{hint}",
+      "message": f"Which target languages do you need?{hint}",
       "content_json": _wizard_content_json(state, active=True, step="target_languages"),
     }
 
-  if not state["name"]:
+  if not state.get("due_done"):
+    if due_error:
+      return {
+        "mode": "direct",
+        "message": due_error,
+        "content_json": _wizard_content_json(state, active=True, step="due_date"),
+      }
     return {
       "mode": "direct",
-      "message": f"Step 4/6 (Optional): project name. Suggested default: {default_project_name}. Reply with a name, or `skip` to use the default.",
-      "content_json": _wizard_content_json(state, active=True, step="project_name"),
+      "message": "What's the due date/time? Reply with a date/time, or `skip`.",
+      "content_json": _wizard_content_json(state, active=True, step="due_date"),
     }
 
-  if not state["template_done"]:
-    suggestions: list[str] = []
-    for entry in templates[:3]:
-      template_id = entry.get("id")
-      template_name = str(entry.get("name") or "").strip()
-      if template_name:
-        suggestions.append(f"#{template_id} {template_name}")
-    suggestion_text = f" Available templates: {'; '.join(suggestions)}." if suggestions else ""
-    state["template_prompted"] = True
+  if assignment_restriction_message:
     return {
       "mode": "direct",
-      "message": "Step 5/6: Optional template. Reply with template ID/name or `skip`." + suggestion_text,
-      "content_json": _wizard_content_json(state, active=True, step="template"),
+      "message": assignment_restriction_message,
+      "content_json": _wizard_content_json(state, active=True, step="assignment"),
     }
+
+  if not state.get("assignment_done"):
+    if assignment_error:
+      return {
+        "mode": "direct",
+        "message": assignment_error,
+        "content_json": _wizard_content_json(state, active=True, step="assignment"),
+      }
+    if can_assign_others:
+      suggestions: list[str] = []
+      for entry in assignable_users[:5]:
+        try:
+          suggestions.append(f"{int(entry.get('userId'))} ({str(entry.get('username') or '').strip()})")
+        except Exception:
+          continue
+      suggestion_text = f" Available: {', '.join(suggestions)}." if suggestions else ""
+      return {
+        "mode": "direct",
+        "message": "Who should this project be assigned to / owned by?" + suggestion_text,
+        "content_json": _wizard_content_json(state, active=True, step="assignment"),
+      }
+
+  if not has_engines:
+    return {
+      "mode": "direct",
+      "message": "No translation engine is configured/enabled for your account/project scope. A manager/admin can enable it for you.",
+      "content_json": _wizard_content_json(state, active=True, step="translation_engine"),
+    }
+
+  if not state.get("engine_done"):
+    if engine_error:
+      return {
+        "mode": "direct",
+        "message": engine_error,
+        "content_json": _wizard_content_json(state, active=True, step="translation_engine"),
+      }
+    engine_suggestions = [f"{int(entry.get('id'))} ({str(entry.get('name') or '').strip()})" for entry in engines[:5]]
+    suggestion_text = f" Available engines: {', '.join(engine_suggestions)}." if engine_suggestions else ""
+    return {
+      "mode": "direct",
+      "message": "Which translation engine should I use?" + suggestion_text,
+      "content_json": _wizard_content_json(state, active=True, step="translation_engine"),
+    }
+
+  rules_warning: str | None = None
+  if not state.get("rules_done"):
+    if rulesets:
+      if rules_error:
+        return {
+          "mode": "direct",
+          "message": rules_error,
+          "content_json": _wizard_content_json(state, active=True, step="ruleset"),
+        }
+      rule_suggestions = [f"{int(entry.get('id'))} ({str(entry.get('name') or '').strip()})" for entry in rulesets[:5]]
+      suggestion_text = f" Available rulesets: {', '.join(rule_suggestions)}." if rule_suggestions else ""
+      return {
+        "mode": "direct",
+        "message": "Select a ruleset, or `skip` to continue without rules." + suggestion_text,
+        "content_json": _wizard_content_json(state, active=True, step="ruleset"),
+      }
+    state["rules_done"] = True
+    state["ruleset_id"] = None
+    rules_warning = "No rulesets are available. Continuing without rules."
+
+  tmx_warning: str | None = None
+  if not state.get("tmx_done"):
+    if tmx_entries:
+      if tmx_error:
+        return {
+          "mode": "direct",
+          "message": tmx_error,
+          "content_json": _wizard_content_json(state, active=True, step="tmx"),
+        }
+      tmx_suggestions = [f"{int(entry.get('id'))} ({str(entry.get('label') or '').strip()})" for entry in tmx_entries[:5]]
+      suggestion_text = f" Available TMX: {', '.join(tmx_suggestions)}." if tmx_suggestions else ""
+      return {
+        "mode": "direct",
+        "message": "Use an existing TMX? Reply with ID, or `skip` for none." + suggestion_text,
+        "content_json": _wizard_content_json(state, active=True, step="tmx"),
+      }
+    state["tmx_done"] = True
+    state["tmx_id"] = None
+    tmx_warning = "TMX is not enabled for your account/project scope. A manager/admin can enable it for you."
+
+  termbase_warning: str | None = None
+  if not state.get("termbase_done"):
+    if termbases:
+      if termbase_error:
+        return {
+          "mode": "direct",
+          "message": termbase_error,
+          "content_json": _wizard_content_json(state, active=True, step="termbase"),
+        }
+      termbase_suggestions = [
+        f"{int(entry.get('id'))} ({str(entry.get('label') or entry.get('name') or '').strip()})"
+        for entry in termbases[:5]
+      ]
+      suggestion_text = f" Available termbases: {', '.join(termbase_suggestions)}." if termbase_suggestions else ""
+      return {
+        "mode": "direct",
+        "message": "Use a termbase? Reply with ID, or `skip` for none." + suggestion_text,
+        "content_json": _wizard_content_json(state, active=True, step="termbase"),
+      }
+    state["termbase_done"] = True
+    state["termbase_id"] = None
+    termbase_warning = "Termbase is not enabled for your account/project scope. A manager/admin can enable it for you."
+
+  if state_changed:
+    state["awaiting_confirm"] = False
 
   args: dict[str, Any] = {
-    "name": state["name"] or default_project_name,
     "source_lang": state["source_lang"] or default_source,
     "target_langs": state["target_langs"],
     "file_ids": state["file_ids"],
+    "due_at": state.get("due_at"),
+    "assigned_user_id": state.get("owner_user_id"),
+    "translation_engine_id": state.get("translation_engine_id"),
+    "ruleset_id": state.get("ruleset_id"),
+    "tmx_id": state.get("tmx_id"),
+    "termbase_id": state.get("termbase_id"),
   }
-  if state["template_id"]:
-    args["template_id"] = int(state["template_id"])
+  if not args.get("due_at"):
+    args.pop("due_at", None)
 
-  summary_lines = [
-    "Step 6/6: Confirm project creation.",
-    f"Name: {args['name']}",
-    f"Languages: {args['source_lang']} -> {', '.join(state['target_langs'])}",
-    f"File IDs: {', '.join(str(v) for v in state['file_ids'])}",
-    f"Template: {state['template_name'] or 'none'}",
+  file_names = [
+    str(state.get("file_names", {}).get(str(file_id)) or f"file #{file_id}")
+    for file_id in state.get("file_ids", [])
   ]
+  engine_label = _resource_label_by_id(engines, state.get("translation_engine_id"))
+  ruleset_label = _resource_label_by_id(rulesets, state.get("ruleset_id"))
+  tmx_label = _resource_label_by_id(tmx_entries, state.get("tmx_id"))
+  termbase_label = _resource_label_by_id(termbases, state.get("termbase_id"))
+  due_display = str(state.get("due_at") or "none")
+  owner_display = str(state.get("owner_username") or user_context.username)
+
+  summary_lines: list[str] = []
+  for warning in [rules_warning, tmx_warning, termbase_warning]:
+    if warning:
+      summary_lines.append(f"Notice: {warning}")
+  summary_lines.extend(
+    [
+      "Create the project with these settings?",
+      f"Files: {len(state['file_ids'])} ({', '.join(file_names)})",
+      f"Source + targets: {args.get('source_lang') or 'auto'} -> {', '.join(state['target_langs'])}",
+      f"Due date: {due_display}",
+      f"Owner/assignee: {owner_display}",
+      f"Engine: {engine_label or state.get('translation_engine_id') or 'none'}",
+      f"Ruleset: {ruleset_label or 'none'}",
+      f"TMX: {tmx_label or 'none'}",
+      f"Termbase: {termbase_label or 'none'}",
+    ]
+  )
 
   if state["awaiting_confirm"] and _is_affirmative(raw):
     return {
@@ -1428,7 +1939,12 @@ async def _run_create_project_tool(
         "source_lang": args.get("source_lang") or args.get("sourceLang"),
         "target_langs": args.get("target_langs") or args.get("targetLangs"),
         "file_ids": file_ids,
-        "template_id": args.get("template_id") or args.get("templateId"),
+        "due_at": args.get("due_at") or args.get("dueAt"),
+        "assigned_user_id": args.get("assigned_user_id") or args.get("assignedUserId") or args.get("owner_user_id") or args.get("ownerUserId"),
+        "translation_engine_id": args.get("translation_engine_id") or args.get("translationEngineId"),
+        "ruleset_id": args.get("ruleset_id") or args.get("rulesetId"),
+        "tmx_id": args.get("tmx_id") or args.get("tmxId"),
+        "termbase_id": args.get("termbase_id") or args.get("termbaseId") or args.get("glossary_id") or args.get("glossaryId"),
       },
     },
     trace_id=trace_id,
@@ -1474,7 +1990,13 @@ async def _run_create_project_tool(
     "status": str(project.get("status") or "provisioning"),
     "sourceLang": project.get("sourceLang"),
     "targetLangs": project.get("targetLangs"),
-    "projectTemplateId": project.get("projectTemplateId"),
+    "assignedUserId": project.get("assignedUserId"),
+    "assignedUsername": project.get("assignedUsername"),
+    "translationEngineId": project.get("translationEngineId"),
+    "rulesetId": project.get("rulesetId"),
+    "tmxId": project.get("tmxId"),
+    "termbaseId": project.get("termbaseId"),
+    "dueAt": project.get("dueAt"),
     "nextAction": next_action or None,
     "fileProcessing": file_processing,
     "fileIds": payload.get("fileIds"),

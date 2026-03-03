@@ -162,6 +162,85 @@ async function cleanupUserData(userId: number, username: string) {
   await db.query("DELETE FROM users WHERE id = $1", [userId]);
 }
 
+async function upsertLanguageSettings(params: {
+  enabled: string[];
+  defaultSource: string;
+  defaultTargets: string[];
+  allowSingleLanguage?: boolean;
+}) {
+  await db.query(
+    `INSERT INTO org_language_settings(
+       id,
+       enabled_language_tags,
+       default_source_tag,
+       default_target_tags,
+       allow_single_language,
+       updated_at
+     )
+     VALUES (1, $1::jsonb, $2, $3::jsonb, $4, NOW())
+     ON CONFLICT (id) DO UPDATE
+     SET enabled_language_tags = EXCLUDED.enabled_language_tags,
+         default_source_tag = EXCLUDED.default_source_tag,
+         default_target_tags = EXCLUDED.default_target_tags,
+         allow_single_language = EXCLUDED.allow_single_language,
+         updated_at = NOW()`,
+    [
+      JSON.stringify(params.enabled),
+      params.defaultSource,
+      JSON.stringify(params.defaultTargets),
+      Boolean(params.allowSingleLanguage)
+    ]
+  );
+}
+
+type LanguageSettingsSnapshot = {
+  enabled: string[];
+  defaultSource: string;
+  defaultTargets: string[];
+  allowSingleLanguage: boolean;
+} | null;
+
+async function readLanguageSettingsSnapshot(): Promise<LanguageSettingsSnapshot> {
+  const res = await db.query<{
+    enabled_language_tags: unknown;
+    default_source_tag: string | null;
+    default_target_tags: unknown;
+    allow_single_language: boolean | null;
+  }>(
+    `SELECT enabled_language_tags, default_source_tag, default_target_tags, allow_single_language
+     FROM org_language_settings
+     WHERE id = 1
+     LIMIT 1`
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  const enabled = Array.isArray(row.enabled_language_tags)
+    ? row.enabled_language_tags.map((entry) => String(entry || "").trim()).filter(Boolean)
+    : [];
+  const defaultTargets = Array.isArray(row.default_target_tags)
+    ? row.default_target_tags.map((entry) => String(entry || "").trim()).filter(Boolean)
+    : [];
+  return {
+    enabled,
+    defaultSource: String(row.default_source_tag || "").trim() || "en",
+    defaultTargets,
+    allowSingleLanguage: Boolean(row.allow_single_language)
+  };
+}
+
+async function restoreLanguageSettingsSnapshot(snapshot: LanguageSettingsSnapshot) {
+  if (!snapshot) {
+    await db.query("DELETE FROM org_language_settings WHERE id = 1");
+    return;
+  }
+  await upsertLanguageSettings({
+    enabled: snapshot.enabled,
+    defaultSource: snapshot.defaultSource,
+    defaultTargets: snapshot.defaultTargets,
+    allowSingleLanguage: snapshot.allowSingleLanguage
+  });
+}
+
 test("chat routes scope threads and messages by user_id", async () => {
   await initDatabase();
   const gateway = await createMockGateway();
@@ -348,3 +427,253 @@ test("internal create_project tool rejects empty file_ids", async () => {
   }
 });
 
+test("non-manager cannot assign internal create_project to another user", async () => {
+  await initDatabase();
+  const gateway = await createMockGateway();
+  const reviewerUser = await createUser({ role: "user", departmentId: 1 });
+  const managerUser = await createUser({ role: "manager", departmentId: 1 });
+  const app = await createTestApp(gateway.url);
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/chat/internal/tools/create-project",
+      headers: {
+        "x-app-agent-secret": CONFIG.APP_AGENT_INTERNAL_SECRET,
+        "content-type": "application/json"
+      },
+      payload: {
+        userContext: {
+          userId: reviewerUser.id,
+          username: reviewerUser.username,
+          role: reviewerUser.role,
+          departmentId: reviewerUser.departmentId
+        },
+        args: {
+          source_lang: "en",
+          target_langs: ["de"],
+          file_ids: [99999],
+          assigned_user_id: managerUser.id
+        }
+      }
+    });
+    assert.equal(res.statusCode, 403, res.body);
+    assert.match(res.body, /managers\/admins/i);
+  } finally {
+    await app.close();
+    await gateway.app.close();
+    await cleanupUserData(reviewerUser.id, reviewerUser.username);
+    await cleanupUserData(managerUser.id, managerUser.username);
+  }
+});
+
+test("manager can assign create_project to another user (permission passes)", async () => {
+  await initDatabase();
+  const gateway = await createMockGateway();
+  const managerUser = await createUser({ role: "manager", departmentId: 1 });
+  const reviewerUser = await createUser({ role: "user", departmentId: 1 });
+  const app = await createTestApp(gateway.url);
+  const languageSnapshot = await readLanguageSettingsSnapshot();
+
+  let engineId: number | null = null;
+  try {
+    await upsertLanguageSettings({
+      enabled: ["en", "de"],
+      defaultSource: "en",
+      defaultTargets: ["de"],
+      allowSingleLanguage: false
+    });
+
+    const createdEngine = await db.query<{ id: number }>(
+      `INSERT INTO translation_engines(name, disabled)
+       VALUES ($1, FALSE)
+       RETURNING id`,
+      [`agent-engine-${Date.now()}`]
+    );
+    engineId = Number(createdEngine.rows[0]?.id ?? 0);
+    assert.ok(engineId > 0);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/chat/internal/tools/create-project",
+      headers: {
+        "x-app-agent-secret": CONFIG.APP_AGENT_INTERNAL_SECRET,
+        "content-type": "application/json"
+      },
+      payload: {
+        userContext: {
+          userId: managerUser.id,
+          username: managerUser.username,
+          role: managerUser.role,
+          departmentId: managerUser.departmentId
+        },
+        args: {
+          source_lang: "en",
+          target_langs: ["de"],
+          file_ids: [99999],
+          assigned_user_id: reviewerUser.id,
+          translation_engine_id: engineId
+        }
+      }
+    });
+    assert.notEqual(res.statusCode, 403, res.body);
+    assert.match(res.body, /(file_ids could not be found|file_ids|not be found)/i);
+  } finally {
+    if (engineId != null) {
+      await db.query("DELETE FROM translation_engines WHERE id = $1", [engineId]);
+    }
+    await restoreLanguageSettingsSnapshot(languageSnapshot);
+    await app.close();
+    await gateway.app.close();
+    await cleanupUserData(managerUser.id, managerUser.username);
+    await cleanupUserData(reviewerUser.id, reviewerUser.username);
+  }
+});
+
+test("create_project rejects target language not enabled", async () => {
+  await initDatabase();
+  const gateway = await createMockGateway();
+  const managerUser = await createUser({ role: "manager", departmentId: 1 });
+  const app = await createTestApp(gateway.url);
+  const languageSnapshot = await readLanguageSettingsSnapshot();
+
+  try {
+    await upsertLanguageSettings({
+      enabled: ["en", "de"],
+      defaultSource: "en",
+      defaultTargets: ["de"],
+      allowSingleLanguage: false
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/chat/internal/tools/create-project",
+      headers: {
+        "x-app-agent-secret": CONFIG.APP_AGENT_INTERNAL_SECRET,
+        "content-type": "application/json"
+      },
+      payload: {
+        userContext: {
+          userId: managerUser.id,
+          username: managerUser.username,
+          role: managerUser.role,
+          departmentId: managerUser.departmentId
+        },
+        args: {
+          source_lang: "en",
+          target_langs: ["fr"],
+          file_ids: [99999]
+        }
+      }
+    });
+    assert.equal(res.statusCode, 400, res.body);
+    assert.match(res.body, /not enabled/i);
+  } finally {
+    await restoreLanguageSettingsSnapshot(languageSnapshot);
+    await app.close();
+    await gateway.app.close();
+    await cleanupUserData(managerUser.id, managerUser.username);
+  }
+});
+
+test("wizard options include missing-resource notices and assignable-user auth", async () => {
+  await initDatabase();
+  const gateway = await createMockGateway();
+  const managerUser = await createUser({ role: "manager", departmentId: 1 });
+  const reviewerUser = await createUser({ role: "user", departmentId: 1 });
+  const app = await createTestApp(gateway.url);
+
+  const originalEngines = await db.query<{ id: number; disabled: boolean }>(
+    "SELECT id, disabled FROM translation_engines"
+  );
+  const originalRules = await db.query<{ id: number; disabled: boolean }>(
+    "SELECT id, disabled FROM language_processing_rulesets"
+  );
+  const originalTmx = await db.query<{ id: number; disabled: boolean }>(
+    "SELECT id, disabled FROM tm_library"
+  );
+  const originalTermbases = await db.query<{ id: number; disabled: boolean }>(
+    "SELECT id, disabled FROM glossaries"
+  );
+
+  try {
+    await db.query("UPDATE translation_engines SET disabled = TRUE");
+    await db.query("UPDATE language_processing_rulesets SET disabled = TRUE");
+    await db.query("UPDATE tm_library SET disabled = TRUE");
+    await db.query("UPDATE glossaries SET disabled = TRUE");
+
+    const deniedAssignable = await app.inject({
+      method: "POST",
+      url: "/api/chat/internal/tools/list-assignable-users",
+      headers: {
+        "x-app-agent-secret": CONFIG.APP_AGENT_INTERNAL_SECRET,
+        "content-type": "application/json"
+      },
+      payload: {
+        userContext: {
+          userId: reviewerUser.id,
+          username: reviewerUser.username,
+          role: reviewerUser.role,
+          departmentId: reviewerUser.departmentId
+        }
+      }
+    });
+    assert.equal(deniedAssignable.statusCode, 403, deniedAssignable.body);
+
+    const optionsRes = await app.inject({
+      method: "POST",
+      url: "/api/chat/internal/tools/project-wizard-options",
+      headers: {
+        "x-app-agent-secret": CONFIG.APP_AGENT_INTERNAL_SECRET,
+        "content-type": "application/json"
+      },
+      payload: {
+        userContext: {
+          userId: managerUser.id,
+          username: managerUser.username,
+          role: managerUser.role,
+          departmentId: managerUser.departmentId
+        }
+      }
+    });
+    assert.equal(optionsRes.statusCode, 200, optionsRes.body);
+    const assignmentCfg = optionsRes.json()?.wizard?.configurable?.assignment ?? {};
+    assert.equal(Boolean(assignmentCfg.canAssignOthers), true);
+    assert.ok(Array.isArray(assignmentCfg.assignableUsers), "assignable users should be included for manager");
+    const notices = optionsRes.json()?.wizard?.configurable?.notices ?? [];
+    const kinds = new Set<string>(notices.map((entry: any) => String(entry?.kind || "")));
+    assert.ok(kinds.has("engine_missing"), "engine_missing notice expected");
+    assert.ok(kinds.has("ruleset_missing"), "ruleset_missing notice expected");
+    assert.ok(kinds.has("tmx_missing"), "tmx_missing notice expected");
+    assert.ok(kinds.has("termbase_missing"), "termbase_missing notice expected");
+  } finally {
+    for (const row of originalEngines.rows) {
+      await db.query("UPDATE translation_engines SET disabled = $2 WHERE id = $1", [
+        row.id,
+        row.disabled
+      ]);
+    }
+    for (const row of originalRules.rows) {
+      await db.query("UPDATE language_processing_rulesets SET disabled = $2 WHERE id = $1", [
+        row.id,
+        row.disabled
+      ]);
+    }
+    for (const row of originalTmx.rows) {
+      await db.query("UPDATE tm_library SET disabled = $2 WHERE id = $1", [
+        row.id,
+        row.disabled
+      ]);
+    }
+    for (const row of originalTermbases.rows) {
+      await db.query("UPDATE glossaries SET disabled = $2 WHERE id = $1", [
+        row.id,
+        row.disabled
+      ]);
+    }
+    await app.close();
+    await gateway.app.close();
+    await cleanupUserData(managerUser.id, managerUser.username);
+    await cleanupUserData(reviewerUser.id, reviewerUser.username);
+  }
+});

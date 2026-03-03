@@ -65,8 +65,22 @@ type InternalCreateProjectArgs = {
   targetLangs?: string[];
   file_ids?: number[];
   fileIds?: number[];
-  template_id?: number;
-  templateId?: number;
+  due_at?: string;
+  dueAt?: string;
+  owner_user_id?: number | string;
+  ownerUserId?: number | string;
+  assigned_user_id?: number | string;
+  assignedUserId?: number | string;
+  translation_engine_id?: number;
+  translationEngineId?: number;
+  ruleset_id?: number;
+  rulesetId?: number;
+  tmx_id?: number;
+  tmxId?: number;
+  glossary_id?: number;
+  glossaryId?: number;
+  termbase_id?: number;
+  termbaseId?: number;
 };
 
 type GlobalLanguageSettings = {
@@ -110,14 +124,19 @@ type SourceArtifactRow = {
   meta_json: any;
 };
 
-type ProjectTemplateRow = {
-  id: number;
-  name: string;
-  description: string | null;
+type AssignableUser = {
+  userId: number;
+  username: string;
+  role: string;
+  departmentId: number | null;
+};
+
+type ResolvedUserRef = {
+  userId: number;
+  username: string;
+  role: string;
+  departmentId: number | null;
   disabled: boolean;
-  src_lang: string | null;
-  target_langs: unknown;
-  file_type_config_id: number | null;
 };
 
 type FileProcessingStatus = "QUEUED" | "PROCESSING" | "READY" | "FAILED";
@@ -166,6 +185,124 @@ const FILE_TYPE_EXTENSIONS: Record<string, string[]> = {
   pptx: [".ppt", ".pptx"],
   xlsx: [".xls", ".xlsx"]
 };
+
+function canAssignProjectsByRole(role: string | null | undefined) {
+  const normalized = String(role || "").trim().toLowerCase();
+  return normalized === "admin" || normalized === "manager";
+}
+
+async function resolveUserRef(userRef: unknown): Promise<ResolvedUserRef | null> {
+  const raw = String(userRef ?? "").trim();
+  if (!raw) return null;
+
+  if (/^\d+$/.test(raw)) {
+    const userId = Number(raw);
+    if (!Number.isFinite(userId) || userId <= 0) return null;
+    const res = await db.query<{
+      id: number;
+      username: string;
+      role: string | null;
+      department_id: number | null;
+      disabled: boolean;
+    }>(
+      `SELECT id, username, role, department_id, disabled
+       FROM users
+       WHERE id = $1
+       LIMIT 1`,
+      [Math.trunc(userId)]
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    return {
+      userId: Number(row.id),
+      username: String(row.username || "").trim(),
+      role: String(row.role || "").trim().toLowerCase(),
+      departmentId:
+        row.department_id != null && Number.isFinite(Number(row.department_id)) && Number(row.department_id) > 0
+          ? Math.trunc(Number(row.department_id))
+          : null,
+      disabled: Boolean(row.disabled)
+    };
+  }
+
+  const normalizedUsername = raw.toLowerCase();
+  const res = await db.query<{
+    id: number;
+    username: string;
+    role: string | null;
+    department_id: number | null;
+    disabled: boolean;
+  }>(
+    `SELECT id, username, role, department_id, disabled
+     FROM users
+     WHERE LOWER(username) = LOWER($1)
+     LIMIT 1`,
+    [normalizedUsername]
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  return {
+    userId: Number(row.id),
+    username: String(row.username || "").trim(),
+    role: String(row.role || "").trim().toLowerCase(),
+    departmentId:
+      row.department_id != null && Number.isFinite(Number(row.department_id)) && Number(row.department_id) > 0
+        ? Math.trunc(Number(row.department_id))
+        : null,
+    disabled: Boolean(row.disabled)
+  };
+}
+
+async function listAssignableUsersForContext(userContext: InternalUserContext): Promise<AssignableUser[]> {
+  const canAssign = canAssignProjectsByRole(userContext.role);
+  const departmentId = userContext.departmentId;
+  const queryText = canAssign
+    ? userContext.role === "admin"
+      ? `SELECT id, username, role, department_id
+         FROM users
+         WHERE disabled = FALSE
+         ORDER BY LOWER(username) ASC, id ASC`
+      : `SELECT id, username, role, department_id
+         FROM users
+         WHERE disabled = FALSE
+           AND ($1::int IS NULL OR department_id = $1)
+         ORDER BY LOWER(username) ASC, id ASC`
+    : `SELECT id, username, role, department_id
+       FROM users
+       WHERE disabled = FALSE
+         AND id = $1
+       LIMIT 1`;
+  const queryParams = canAssign
+    ? userContext.role === "admin"
+      ? []
+      : [departmentId]
+    : [userContext.userId];
+  const res = await db.query<{
+    id: number;
+    username: string;
+    role: string | null;
+    department_id: number | null;
+  }>(queryText, queryParams);
+
+  return res.rows.map((row) => {
+    const departmentIdRaw = Number(row.department_id ?? 0);
+    return {
+      userId: Number(row.id),
+      username: String(row.username || "").trim(),
+      role: String(row.role || "").trim().toLowerCase(),
+      departmentId:
+        Number.isFinite(departmentIdRaw) && departmentIdRaw > 0 ? Math.trunc(departmentIdRaw) : null
+    };
+  });
+}
+
+function parseDueAtIso(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.valueOf())) return "__invalid__";
+  return parsed.toISOString();
+}
 
 function parseUserContext(input: unknown): InternalUserContext | null {
   if (!input || typeof input !== "object") return null;
@@ -591,42 +728,64 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
       return reply.code(400).send({ error: "create_project requires at least one file_id." });
     }
 
+    const ownerRef =
+      args.owner_user_id ??
+      args.ownerUserId ??
+      args.assigned_user_id ??
+      args.assignedUserId ??
+      null;
+    const requesterCanAssign = canAssignProjectsByRole(userContext.role);
+
+    let assignedUser = {
+      userId: userContext.userId,
+      username: userContext.username,
+      role: userContext.role,
+      departmentId: userContext.departmentId
+    };
+    if (ownerRef != null && String(ownerRef).trim()) {
+      const resolvedOwner = await resolveUserRef(ownerRef);
+      if (!resolvedOwner) {
+        return reply.code(400).send({ error: "Assigned owner user was not found." });
+      }
+      if (resolvedOwner.disabled) {
+        return reply.code(400).send({ error: "Assigned owner user is disabled." });
+      }
+      const isSelf =
+        String(resolvedOwner.username).trim().toLowerCase() ===
+        String(userContext.username).trim().toLowerCase();
+      if (!requesterCanAssign && !isSelf) {
+        return reply.code(403).send({
+          error:
+            "Only managers/admins can assign projects to other users. I'll create it for you, or ask a manager/admin to create/assign it."
+        });
+      }
+      if (requesterCanAssign && userContext.role === "manager" && !isSelf) {
+        if (
+          userContext.departmentId == null ||
+          resolvedOwner.departmentId == null ||
+          Number(resolvedOwner.departmentId) !== Number(userContext.departmentId)
+        ) {
+          return reply.code(403).send({
+            error: "Managers can assign projects only within their own department."
+          });
+        }
+      }
+      assignedUser = {
+        userId: resolvedOwner.userId,
+        username: resolvedOwner.username,
+        role: resolvedOwner.role,
+        departmentId: resolvedOwner.departmentId
+      };
+    }
+
     const globalLanguages = await loadGlobalLanguageSettings();
     const allowedLanguageSet = new Set(globalLanguages.enabledLanguages);
 
-    const requestedTemplateId = parsePositiveInt(args.template_id ?? args.templateId);
-    let selectedTemplate: ProjectTemplateRow | null = null;
-    if (requestedTemplateId != null) {
-      const templateRes = await db.query<ProjectTemplateRow>(
-        `SELECT id, name, description, disabled, src_lang, target_langs, file_type_config_id
-         FROM project_templates
-         WHERE id = $1
-         LIMIT 1`,
-        [requestedTemplateId]
-      );
-      const template = templateRes.rows[0];
-      if (!template) {
-        return reply.code(400).send({ error: "Selected project template was not found." });
-      }
-      if (template.disabled) {
-        return reply.code(400).send({ error: "Selected project template is disabled." });
-      }
-      selectedTemplate = template;
-    }
-
-    const templateSourceLanguage = normalizeLanguageTag(String(selectedTemplate?.src_lang || ""));
     const sourceLanguage =
       normalizeLanguageTag(String(args.source_lang ?? args.sourceLang ?? "")) ||
-      templateSourceLanguage ||
       globalLanguages.defaultSource;
 
     let targetLanguages = normalizeTargetLanguages(args.target_langs ?? args.targetLangs, sourceLanguage);
-    if (targetLanguages.length === 0) {
-      const templateTargets = normalizeLanguageList(selectedTemplate?.target_langs ?? []).filter((entry) => entry !== sourceLanguage);
-      if (templateTargets.length > 0) {
-        targetLanguages = templateTargets;
-      }
-    }
     if (targetLanguages.length === 0) {
       targetLanguages = globalLanguages.defaultTargets.filter((entry) => entry !== sourceLanguage);
     }
@@ -652,6 +811,85 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
     }
     if (!globalLanguages.allowSingleLanguage && targetLanguages.every((entry) => entry === sourceLanguage)) {
       return reply.code(400).send({ error: "Target language must be different from source language." });
+    }
+
+    const dueAtIso = parseDueAtIso(args.due_at ?? args.dueAt);
+    if (dueAtIso === "__invalid__") {
+      return reply.code(400).send({ error: "Invalid due date/time." });
+    }
+
+    const engineRes = await db.query<{ id: number; name: string; config: any }>(
+      `SELECT id, name, config
+       FROM translation_engines
+       WHERE disabled = FALSE
+       ORDER BY
+         CASE
+           WHEN LOWER(COALESCE(config->>'agentDefault', 'false')) IN ('true', '1', 'yes', 'on')
+             OR LOWER(COALESCE(config->>'appAgentDefault', 'false')) IN ('true', '1', 'yes', 'on')
+           THEN 0
+           ELSE 1
+         END,
+         updated_at DESC,
+         id DESC`
+    );
+    const engineIds = new Set<number>(engineRes.rows.map((row) => Number(row.id)));
+    const requestedEngineId = parsePositiveInt(
+      args.translation_engine_id ?? args.translationEngineId
+    );
+    const defaultEngineIdRaw = Number(engineRes.rows[0]?.id ?? 0);
+    const defaultEngineId =
+      Number.isFinite(defaultEngineIdRaw) && defaultEngineIdRaw > 0 ? Math.trunc(defaultEngineIdRaw) : null;
+    const selectedEngineId = requestedEngineId ?? defaultEngineId;
+    if (!selectedEngineId) {
+      return reply.code(400).send({
+        error:
+          "No translation engine is configured/enabled for your account/project scope. A manager/admin can enable it for you."
+      });
+    }
+    if (!engineIds.has(selectedEngineId)) {
+      return reply.code(400).send({ error: "Selected translation engine is not available." });
+    }
+
+    const rulesetRes = await db.query<{ id: number; name: string }>(
+      `SELECT id, name
+       FROM language_processing_rulesets
+       WHERE disabled = FALSE
+       ORDER BY updated_at DESC, id DESC`
+    );
+    const rulesetIds = new Set<number>(rulesetRes.rows.map((row) => Number(row.id)));
+    const selectedRulesetId = parsePositiveInt(args.ruleset_id ?? args.rulesetId);
+    if (selectedRulesetId != null && !rulesetIds.has(selectedRulesetId)) {
+      return reply.code(400).send({ error: "Selected ruleset is not available." });
+    }
+
+    const tmxRes = await db.query<{ id: number; label: string }>(
+      `SELECT id, label
+       FROM tm_library
+       WHERE disabled = FALSE
+         AND origin = 'upload'
+       ORDER BY updated_at DESC, id DESC`
+    );
+    const tmxIds = new Set<number>(tmxRes.rows.map((row) => Number(row.id)));
+    const selectedTmxId = parsePositiveInt(args.tmx_id ?? args.tmxId);
+    if (selectedTmxId != null && !tmxIds.has(selectedTmxId)) {
+      return reply.code(400).send({ error: "Selected TMX is not available." });
+    }
+
+    const termbaseRes = await db.query<{ id: number; label: string }>(
+      `SELECT id, label
+       FROM glossaries
+       WHERE disabled = FALSE
+       ORDER BY updated_at DESC, id DESC`
+    );
+    const termbaseIds = new Set<number>(termbaseRes.rows.map((row) => Number(row.id)));
+    const selectedTermbaseId = parsePositiveInt(
+      args.termbase_id ??
+        args.termbaseId ??
+        args.glossary_id ??
+        args.glossaryId
+    );
+    if (selectedTermbaseId != null && !termbaseIds.has(selectedTermbaseId)) {
+      return reply.code(400).send({ error: "Selected termbase is not available." });
     }
 
     const sourceFileRes = await db.query<SourceFileRow>(
@@ -706,6 +944,35 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
     const projectName = String(args.name || "").trim() || buildDefaultProjectName(firstSourceFile.original_name);
 
     const created = await withTransaction(async (client) => {
+      const projectSettings: Record<string, any> = {
+        createdByAgent: true,
+        sourceFileIds: fileIds,
+        appAgentSourceFileMap: {},
+        ownerUserId: assignedUser.userId,
+        owner_user_id: assignedUser.userId,
+        assignedUserId: assignedUser.userId,
+        assigned_user_id: assignedUser.userId,
+        translationEngineDefaultId: selectedEngineId,
+        translation_engine_default_id: selectedEngineId,
+        rulesetId: selectedRulesetId ?? null,
+        languageProcessingRulesetId: selectedRulesetId ?? null,
+        language_processing_ruleset_id: selectedRulesetId ?? null,
+        rulesEnabled: selectedRulesetId != null,
+        rules_enabled: selectedRulesetId != null,
+        tmxId: selectedTmxId ?? null,
+        tmx_id: selectedTmxId ?? null,
+        termbaseEnabled: selectedTermbaseId != null,
+        termbase_enabled: selectedTermbaseId != null,
+        glossaryEnabled: selectedTermbaseId != null,
+        glossary_enabled: selectedTermbaseId != null,
+        glossaryId: selectedTermbaseId ?? null,
+        glossary_id: selectedTermbaseId ?? null
+      };
+      if (dueAtIso && dueAtIso !== "__invalid__") {
+        projectSettings.dueAt = dueAtIso;
+        projectSettings.due_at = dueAtIso;
+      }
+
       const projectRes = await client.query<{
         id: number;
         name: string;
@@ -728,10 +995,13 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
            created_by,
            assigned_user,
            department_id,
-           project_template_id,
+           translation_engine_id,
+           glossary_id,
+           owner_user_id,
+           assigned_to_user_id,
            project_settings
          )
-         VALUES ($1, $2, $3, $4::jsonb, 'provisioning', NULL, NULL, NOW(), NOW(), NULL, 0, 'IMPORT_FILES', $5, $5, $6, $7, $8::jsonb)
+         VALUES ($1, $2, $3, $4::jsonb, 'provisioning', NULL, NULL, NOW(), NOW(), NULL, 0, 'IMPORT_FILES', $5, $6, $7, $8, $9, $10, $10, $11::jsonb)
          RETURNING id, name, status::text AS status, created_at`,
         [
           projectName,
@@ -739,14 +1009,12 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
           targetLanguages[0],
           JSON.stringify(targetLanguages),
           userContext.username,
+          assignedUser.username,
           departmentId,
-          selectedTemplate?.id ?? null,
-          JSON.stringify({
-            createdByAgent: true,
-            sourceFileIds: fileIds,
-            appAgentSourceFileMap: {},
-            projectTemplateId: selectedTemplate?.id ?? null
-          })
+          selectedEngineId,
+          selectedTermbaseId,
+          assignedUser.userId,
+          JSON.stringify(projectSettings)
         ]
       );
       const project = projectRes.rows[0];
@@ -860,10 +1128,26 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
                  target_lang,
                  translator_user,
                  reviewer_user,
+                 tmx_id,
+                 seed_source,
+                 engine_id,
+                 glossary_id,
+                 ruleset_id,
                  status
                )
-               VALUES ($1, $2, $3, $4, $5, NULL, 'draft')`,
-              [project.id, newFileId, sourceLanguage, targetLanguage, userContext.username]
+               VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, 'draft')`,
+              [
+                project.id,
+                newFileId,
+                sourceLanguage,
+                targetLanguage,
+                assignedUser.username,
+                selectedTmxId,
+                selectedTmxId != null ? "tmx" : "none",
+                selectedEngineId,
+                selectedTermbaseId,
+                selectedRulesetId
+              ]
             );
           }
 
@@ -1004,6 +1288,13 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
         projectId: Number(project.id),
         name: String(project.name || ""),
         status: projectStatus,
+        assignedUserId: assignedUser.userId,
+        assignedUsername: assignedUser.username,
+        translationEngineId: selectedEngineId,
+        rulesetId: selectedRulesetId ?? null,
+        tmxId: selectedTmxId ?? null,
+        termbaseId: selectedTermbaseId ?? null,
+        dueAt: dueAtIso && dueAtIso !== "__invalid__" ? dueAtIso : null,
         fileIds: createdFileIds,
         fileStatuses,
         initError: statusRes.rows[0]?.init_error ? String(statusRes.rows[0]?.init_error) : null
@@ -1012,14 +1303,14 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
 
     const now = Date.now();
     await addProjectToCreated(userContext.username, created.projectId, now);
-    await addProjectToAssigned(userContext.username, created.projectId, now);
+    await addProjectToAssigned(created.assignedUsername, created.projectId, now);
     for (const fileId of created.fileIds) {
-      await addFileToAssigned(userContext.username, fileId, now);
+      await addFileToAssigned(created.assignedUsername, fileId, now);
     }
     await touchProjectForUsers({
       projectId: created.projectId,
       createdBy: userContext.username,
-      assignedUser: userContext.username,
+      assignedUser: created.assignedUsername,
       updatedAtMs: now
     });
 
@@ -1031,7 +1322,14 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
         status: created.status,
         sourceLang: sourceLanguage,
         targetLangs: targetLanguages,
-        projectTemplateId: selectedTemplate?.id ?? null,
+        ownerUserId: created.assignedUserId,
+        assignedUserId: created.assignedUserId,
+        assignedUsername: created.assignedUsername,
+        translationEngineId: created.translationEngineId,
+        rulesetId: created.rulesetId,
+        tmxId: created.tmxId,
+        termbaseId: created.termbaseId,
+        dueAt: created.dueAt,
         initError: created.initError
       },
       nextAction: created.status === "ready" ? "OPEN_EDITOR" : "SHOW_PROCESSING",
@@ -1060,6 +1358,23 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
     }
 
     const globalLanguages = await loadGlobalLanguageSettings();
+    const canAssignOthers = canAssignProjectsByRole(userContext.role);
+    const assignableUsers = canAssignOthers
+      ? await listAssignableUsersForContext(userContext)
+      : [];
+    const selfAssignee = canAssignOthers
+      ? assignableUsers.find((entry) => entry.userId === userContext.userId) ?? {
+          userId: userContext.userId,
+          username: userContext.username,
+          role: userContext.role,
+          departmentId: userContext.departmentId
+        }
+      : {
+          userId: userContext.userId,
+          username: userContext.username,
+          role: userContext.role,
+          departmentId: userContext.departmentId
+        };
 
     const fileTypeRes = await db.query<{
       id: number;
@@ -1116,61 +1431,52 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
       });
     });
 
-    const templateRes = await db.query<{
-      id: number;
-      name: string;
-      description: string | null;
-      src_lang: string | null;
-      target_langs: unknown;
-      file_type_config_id: number | null;
-    }>(
-      `SELECT id, name, description, src_lang, target_langs, file_type_config_id
-       FROM project_templates
-       WHERE disabled = FALSE
-       ORDER BY updated_at DESC, id DESC
-       LIMIT 25`
-    );
-    const templates = templateRes.rows.map((row) => {
-      const sourceLang = normalizeLanguageTag(String(row.src_lang || "")) || null;
-      const targetLangs = normalizeLanguageList(row.target_langs || []).filter(
-        (entry) => entry !== sourceLang
-      );
-      return {
-        id: Number(row.id),
-        name: String(row.name || ""),
-        description: row.description ? String(row.description) : null,
-        sourceLang,
-        targetLangs,
-        fileTypeConfigId:
-          row.file_type_config_id != null && Number.isFinite(Number(row.file_type_config_id))
-            ? Number(row.file_type_config_id)
-            : null
-      };
-    });
-
-    const engineRes = await db.query<{ id: number; name: string }>(
-      `SELECT id, name
+    const engineRes = await db.query<{ id: number; name: string; config: any }>(
+      `SELECT id, name, config
        FROM translation_engines
        WHERE disabled = FALSE
-       ORDER BY updated_at DESC, id DESC
-       LIMIT 25`
+       ORDER BY
+         CASE
+           WHEN LOWER(COALESCE(config->>'agentDefault', 'false')) IN ('true', '1', 'yes', 'on')
+             OR LOWER(COALESCE(config->>'appAgentDefault', 'false')) IN ('true', '1', 'yes', 'on')
+           THEN 0
+           ELSE 1
+         END,
+         updated_at DESC,
+         id DESC`
     );
     const rulesetRes = await db.query<{ id: number; name: string }>(
       `SELECT id, name
        FROM language_processing_rulesets
        WHERE disabled = FALSE
-       ORDER BY updated_at DESC, id DESC
-       LIMIT 25`
+       ORDER BY updated_at DESC, id DESC`
     );
-    const glossaryRes = await db.query<{ id: number; label: string; languages: unknown }>(
-      `SELECT id, label, languages
-       FROM glossaries
+    const tmxRes = await db.query<{ id: number; label: string }>(
+      `SELECT id, label
+       FROM tm_library
        WHERE disabled = FALSE
-       ORDER BY updated_at DESC, id DESC
-       LIMIT 25`
+         AND origin = 'upload'
+       ORDER BY updated_at DESC, id DESC`
+    );
+    const termbaseRes = await db.query<{
+      id: number;
+      label: string;
+      languages: unknown;
+      visibility: string | null;
+    }>(
+      canAssignOthers
+        ? `SELECT id, label, languages, visibility
+           FROM glossaries
+           WHERE disabled = FALSE
+           ORDER BY updated_at DESC, id DESC`
+        : `SELECT id, label, languages, visibility
+           FROM glossaries
+           WHERE disabled = FALSE
+             AND COALESCE(LOWER(visibility), 'managers') NOT IN ('admins', 'private')
+           ORDER BY updated_at DESC, id DESC`
     );
 
-    const glossaries = glossaryRes.rows.map((row) => {
+    const termbases = termbaseRes.rows.map((row) => {
       let languageList: string[] = [];
       if (Array.isArray(row.languages)) {
         languageList = row.languages.map((entry) => String(entry || "").trim()).filter(Boolean);
@@ -1187,19 +1493,59 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
       return {
         id: Number(row.id),
         label: String(row.label || ""),
-        languages: languageList
+        languages: languageList,
+        visibility: row.visibility ? String(row.visibility) : null
       };
     });
+
+    const defaultEngineId = engineRes.rows.length > 0 ? Number(engineRes.rows[0]?.id) : null;
+    const defaultRulesetId = rulesetRes.rows.length > 0 ? Number(rulesetRes.rows[0]?.id) : null;
+    const notices: Array<{ kind: string; severity: "error" | "warning"; message: string }> = [];
+    if (engineRes.rows.length === 0) {
+      notices.push({
+        kind: "engine_missing",
+        severity: "error",
+        message:
+          "No translation engine is configured/enabled for your account/project scope. A manager/admin can enable it for you."
+      });
+    }
+    if (rulesetRes.rows.length === 0) {
+      notices.push({
+        kind: "ruleset_missing",
+        severity: "warning",
+        message:
+          "No rulesets are available. Project creation can continue without rules, or ask a manager/admin to configure one."
+      });
+    }
+    if (tmxRes.rows.length === 0) {
+      notices.push({
+        kind: "tmx_missing",
+        severity: "warning",
+        message:
+          "TMX is not enabled for your account/project scope. A manager/admin can enable it for you."
+      });
+    }
+    if (termbaseRes.rows.length === 0) {
+      notices.push({
+        kind: "termbase_missing",
+        severity: "warning",
+        message:
+          "Termbase is not enabled for your account/project scope. A manager/admin can enable it for you."
+      });
+    }
 
     return {
       ok: true,
       wizard: {
         steps: [
           { id: "files", label: "Choose one or more files", required: true },
-          { id: "source_language", label: "Choose source language (or auto default)", required: false },
           { id: "target_languages", label: "Choose one or more target languages", required: true },
-          { id: "project_name", label: "Set project name (optional)", required: false },
-          { id: "template", label: "Optional project template", required: false },
+          { id: "due_date", label: "Set due date/time", required: false },
+          { id: "assignment", label: "Set project owner/assignee", required: true },
+          { id: "translation_engine", label: "Choose translation engine", required: true },
+          { id: "ruleset", label: "Choose ruleset (optional)", required: false },
+          { id: "tmx", label: "Choose TMX (optional)", required: false },
+          { id: "termbase", label: "Choose termbase (optional)", required: false },
           { id: "confirmation", label: "Confirm and create project", required: true }
         ],
         configurable: {
@@ -1212,18 +1558,334 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
           fileTypes: Array.from(fileTypeMap.values()).sort((a, b) =>
             a.fileType.localeCompare(b.fileType)
           ),
-          projectTemplates: templates,
+          assignment: {
+            canAssignOthers,
+            defaultOwner: {
+              userId: selfAssignee.userId,
+              username: selfAssignee.username,
+              role: selfAssignee.role,
+              departmentId: selfAssignee.departmentId
+            },
+            assignableUsers: assignableUsers.map((entry) => ({
+              userId: entry.userId,
+              username: entry.username,
+              role: entry.role,
+              departmentId: entry.departmentId
+            }))
+          },
           translationEngines: engineRes.rows.map((row) => ({
             id: Number(row.id),
-            name: String(row.name || "")
+            name: String(row.name || ""),
+            isDefault: defaultEngineId != null && Number(row.id) === Number(defaultEngineId)
           })),
           rulesets: rulesetRes.rows.map((row) => ({
             id: Number(row.id),
-            name: String(row.name || "")
+            name: String(row.name || ""),
+            isDefault: defaultRulesetId != null && Number(row.id) === Number(defaultRulesetId)
           })),
-          glossaries
+          tmx: tmxRes.rows.map((row) => ({
+            id: Number(row.id),
+            label: String(row.label || "")
+          })),
+          termbases,
+          defaults: {
+            ownerUserId: selfAssignee.userId,
+            translationEngineId: defaultEngineId,
+            rulesetId: defaultRulesetId,
+            tmxId: null,
+            termbaseId: null
+          },
+          availability: {
+            hasEngines: engineRes.rows.length > 0,
+            hasRulesets: rulesetRes.rows.length > 0,
+            hasTmx: tmxRes.rows.length > 0,
+            hasTermbases: termbaseRes.rows.length > 0
+          },
+          notices
         }
       }
+    };
+  });
+
+  app.post("/chat/internal/tools/get-current-user", async (req: any, reply) => {
+    if (!requireInternalAgentSecret(req, reply)) return;
+    const body = (req.body as any) || {};
+    const parsedUserContext = parseUserContext(body.userContext);
+    if (!parsedUserContext) {
+      return reply.code(400).send({ error: "Invalid user context." });
+    }
+    const userContext = await resolveVerifiedToolUser(parsedUserContext);
+    if (!userContext) {
+      return reply.code(403).send({ error: "User context verification failed." });
+    }
+    return {
+      ok: true,
+      user: {
+        userId: userContext.userId,
+        username: userContext.username,
+        role: userContext.role,
+        departmentId: userContext.departmentId
+      }
+    };
+  });
+
+  app.post("/chat/internal/tools/list-enabled-languages", async (req: any, reply) => {
+    if (!requireInternalAgentSecret(req, reply)) return;
+    const body = (req.body as any) || {};
+    const parsedUserContext = parseUserContext(body.userContext);
+    if (!parsedUserContext) {
+      return reply.code(400).send({ error: "Invalid user context." });
+    }
+    const userContext = await resolveVerifiedToolUser(parsedUserContext);
+    if (!userContext) {
+      return reply.code(403).send({ error: "User context verification failed." });
+    }
+    const globalLanguages = await loadGlobalLanguageSettings();
+    return {
+      ok: true,
+      languages: {
+        enabled: globalLanguages.enabledLanguages,
+        defaultSource: globalLanguages.defaultSource,
+        defaultTargets: globalLanguages.defaultTargets,
+        allowSingleLanguage: globalLanguages.allowSingleLanguage
+      }
+    };
+  });
+
+  app.post("/chat/internal/tools/list-translation-engines", async (req: any, reply) => {
+    if (!requireInternalAgentSecret(req, reply)) return;
+    const body = (req.body as any) || {};
+    const parsedUserContext = parseUserContext(body.userContext);
+    if (!parsedUserContext) {
+      return reply.code(400).send({ error: "Invalid user context." });
+    }
+    const userContext = await resolveVerifiedToolUser(parsedUserContext);
+    if (!userContext) {
+      return reply.code(403).send({ error: "User context verification failed." });
+    }
+    const engineRes = await db.query<{ id: number; name: string; config: any }>(
+      `SELECT id, name, config
+       FROM translation_engines
+       WHERE disabled = FALSE
+       ORDER BY
+         CASE
+           WHEN LOWER(COALESCE(config->>'agentDefault', 'false')) IN ('true', '1', 'yes', 'on')
+             OR LOWER(COALESCE(config->>'appAgentDefault', 'false')) IN ('true', '1', 'yes', 'on')
+           THEN 0
+           ELSE 1
+         END,
+         updated_at DESC,
+         id DESC`
+    );
+    const defaultEngineId = engineRes.rows.length > 0 ? Number(engineRes.rows[0]?.id) : null;
+    return {
+      ok: true,
+      defaultEngineId,
+      translationEngines: engineRes.rows.map((row) => ({
+        id: Number(row.id),
+        name: String(row.name || ""),
+        isDefault: defaultEngineId != null && Number(row.id) === Number(defaultEngineId)
+      }))
+    };
+  });
+
+  app.post("/chat/internal/tools/list-rulesets", async (req: any, reply) => {
+    if (!requireInternalAgentSecret(req, reply)) return;
+    const body = (req.body as any) || {};
+    const parsedUserContext = parseUserContext(body.userContext);
+    if (!parsedUserContext) {
+      return reply.code(400).send({ error: "Invalid user context." });
+    }
+    const userContext = await resolveVerifiedToolUser(parsedUserContext);
+    if (!userContext) {
+      return reply.code(403).send({ error: "User context verification failed." });
+    }
+    const rulesetRes = await db.query<{ id: number; name: string }>(
+      `SELECT id, name
+       FROM language_processing_rulesets
+       WHERE disabled = FALSE
+       ORDER BY updated_at DESC, id DESC`
+    );
+    return {
+      ok: true,
+      rulesets: rulesetRes.rows.map((row) => ({
+        id: Number(row.id),
+        name: String(row.name || "")
+      }))
+    };
+  });
+
+  app.post("/chat/internal/tools/list-tmx", async (req: any, reply) => {
+    if (!requireInternalAgentSecret(req, reply)) return;
+    const body = (req.body as any) || {};
+    const parsedUserContext = parseUserContext(body.userContext);
+    if (!parsedUserContext) {
+      return reply.code(400).send({ error: "Invalid user context." });
+    }
+    const userContext = await resolveVerifiedToolUser(parsedUserContext);
+    if (!userContext) {
+      return reply.code(403).send({ error: "User context verification failed." });
+    }
+    const tmxRes = await db.query<{ id: number; label: string }>(
+      `SELECT id, label
+       FROM tm_library
+       WHERE disabled = FALSE
+         AND origin = 'upload'
+       ORDER BY updated_at DESC, id DESC`
+    );
+    return {
+      ok: true,
+      tmx: tmxRes.rows.map((row) => ({
+        id: Number(row.id),
+        label: String(row.label || "")
+      }))
+    };
+  });
+
+  app.post("/chat/internal/tools/list-termbases", async (req: any, reply) => {
+    if (!requireInternalAgentSecret(req, reply)) return;
+    const body = (req.body as any) || {};
+    const parsedUserContext = parseUserContext(body.userContext);
+    if (!parsedUserContext) {
+      return reply.code(400).send({ error: "Invalid user context." });
+    }
+    const userContext = await resolveVerifiedToolUser(parsedUserContext);
+    if (!userContext) {
+      return reply.code(403).send({ error: "User context verification failed." });
+    }
+    const canAssignOthers = canAssignProjectsByRole(userContext.role);
+    const termbaseRes = await db.query<{
+      id: number;
+      label: string;
+      languages: unknown;
+      visibility: string | null;
+    }>(
+      canAssignOthers
+        ? `SELECT id, label, languages, visibility
+           FROM glossaries
+           WHERE disabled = FALSE
+           ORDER BY updated_at DESC, id DESC`
+        : `SELECT id, label, languages, visibility
+           FROM glossaries
+           WHERE disabled = FALSE
+             AND COALESCE(LOWER(visibility), 'managers') NOT IN ('admins', 'private')
+           ORDER BY updated_at DESC, id DESC`
+    );
+    return {
+      ok: true,
+      termbases: termbaseRes.rows.map((row) => ({
+        id: Number(row.id),
+        label: String(row.label || ""),
+        visibility: row.visibility ? String(row.visibility) : null,
+        languages: normalizeLanguageList(row.languages || [])
+      }))
+    };
+  });
+
+  app.post("/chat/internal/tools/list-assignable-users", async (req: any, reply) => {
+    if (!requireInternalAgentSecret(req, reply)) return;
+    const body = (req.body as any) || {};
+    const parsedUserContext = parseUserContext(body.userContext);
+    if (!parsedUserContext) {
+      return reply.code(400).send({ error: "Invalid user context." });
+    }
+    const userContext = await resolveVerifiedToolUser(parsedUserContext);
+    if (!userContext) {
+      return reply.code(403).send({ error: "User context verification failed." });
+    }
+    if (!canAssignProjectsByRole(userContext.role)) {
+      return reply.code(403).send({ error: "Only managers/admins can list assignable users." });
+    }
+    const users = await listAssignableUsersForContext(userContext);
+    return {
+      ok: true,
+      users: users.map((entry) => ({
+        userId: entry.userId,
+        username: entry.username,
+        role: entry.role,
+        departmentId: entry.departmentId
+      }))
+    };
+  });
+
+  app.post("/chat/internal/tools/describe-files", async (req: any, reply) => {
+    if (!requireInternalAgentSecret(req, reply)) return;
+    const body = (req.body as any) || {};
+    const parsedUserContext = parseUserContext(body.userContext);
+    if (!parsedUserContext) {
+      return reply.code(400).send({ error: "Invalid user context." });
+    }
+    const userContext = await resolveVerifiedToolUser(parsedUserContext);
+    if (!userContext) {
+      return reply.code(403).send({ error: "User context verification failed." });
+    }
+    const args = (body.args as InternalCreateProjectArgs) || {};
+    const fileIds = parsePositiveIntArray(args.file_ids ?? args.fileIds);
+    if (fileIds.length === 0) {
+      return reply.code(400).send({ error: "At least one file_id is required." });
+    }
+
+    const fileRes = await db.query<{
+      id: number;
+      original_name: string;
+      project_id: number;
+      department_id: number | null;
+      assigned_user: string | null;
+      created_by: string | null;
+    }>(
+      `SELECT
+         pf.id,
+         pf.original_name,
+         p.id AS project_id,
+         p.department_id,
+         p.assigned_user,
+         p.created_by
+       FROM project_files pf
+       JOIN projects p ON p.id = pf.project_id
+       WHERE pf.id = ANY($1::int[])`,
+      [fileIds]
+    );
+
+    const byId = new Map<number, {
+      id: number;
+      original_name: string;
+      project_id: number;
+      department_id: number | null;
+      assigned_user: string | null;
+      created_by: string | null;
+    }>();
+    fileRes.rows.forEach((row) => byId.set(Number(row.id), row));
+    if (byId.size !== fileIds.length) {
+      return reply.code(400).send({ error: "One or more file_ids could not be found." });
+    }
+
+    for (const fileId of fileIds) {
+      const row = byId.get(fileId);
+      if (!row) continue;
+      const owner = String(row.assigned_user ?? row.created_by ?? "").trim();
+      if (!owner || owner !== userContext.username) {
+        return reply.code(403).send({ error: `Access denied for file_id ${fileId}.` });
+      }
+      if (
+        userContext.departmentId != null &&
+        row.department_id != null &&
+        Number(row.department_id) !== Number(userContext.departmentId)
+      ) {
+        return reply.code(403).send({ error: `Access denied for file_id ${fileId}.` });
+      }
+    }
+
+    return {
+      ok: true,
+      files: fileIds.map((fileId) => {
+        const row = byId.get(fileId)!;
+        return {
+          fileId,
+          filename: String(row.original_name || ""),
+          projectId: Number(row.project_id),
+          departmentId: row.department_id != null ? Number(row.department_id) : null
+        };
+      })
     };
   });
 
