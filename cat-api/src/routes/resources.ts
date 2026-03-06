@@ -7,12 +7,11 @@ import {
   requestUserId
 } from "../middleware/auth.js";
 import { decryptJson, encryptJson } from "../lib/secrets.js";
+import { maskApiKey, maskBaseUrl } from "../lib/masking.js";
 import { applyLanguageProcessingRules, validateLanguageProcessingRules } from "../lib/language-processing.js";
 import {
   hasInvalidOverrideKeys,
   insertRulesetVersion,
-  maskApiKey,
-  maskBaseUrl,
   normalizeBool,
   normalizeFileType,
   normalizeJsonObject,

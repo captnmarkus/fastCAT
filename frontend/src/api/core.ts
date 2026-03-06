@@ -37,7 +37,7 @@ export type ParsingTemplate = {
   updatedAt?: string;
 };
 
-// TM service (tm-proxy) base URL (through nginx: /api â†’ tm-proxy)
+// TM service (tm-proxy) base URL (through nginx: /api -> tm-proxy)
 export const TM_API_BASE =
   (import.meta as any).env.VITE_API_BASE || "/api";
 
@@ -50,11 +50,11 @@ export function tmUrl(tmId?: number, suffix = "") {
   return `${TM_API_BASE}/tm/${id}${suffix}`;
 }
 
-// CAT service (cat-api) base URL (through nginx: /api/cat â†’ cat-api)
+// CAT service (cat-api) base URL (through nginx: /api/cat -> cat-api)
 export const CAT_API_BASE =
   (import.meta as any).env.VITE_CAT_API_BASE || "/api/cat";
 
-// App-wide chat agent API (through nginx: /api/chat â†’ cat-api)
+// App-wide chat agent API (through nginx: /api/chat -> cat-api)
 export const CHAT_API_BASE =
   (import.meta as any).env.VITE_CHAT_API_BASE || "/api/chat";
 

@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import fetch from "node-fetch";
 import { db } from "../db.js";
 import { CONFIG } from "../config.js";
+import { maskApiKey as maskApiKeyValue, maskBaseUrl as maskBaseUrlValue } from "../lib/masking.js";
 import { requireManagerOrAdmin, getRequestUser, requestUserId } from "../middleware/auth.js";
 import { encryptJson } from "../lib/secrets.js";
 
@@ -172,8 +173,8 @@ export async function llmResourcesRoutes(app: FastifyInstance) {
     }
 
     const secretEnc = encryptJson({ baseUrl, ...(apiKey ? { apiKey } : {}) });
-    const baseUrlMasked = maskBaseUrl(baseUrl);
-    const apiKeyMasked = apiKey ? maskApiKey(apiKey) : null;
+    const baseUrlMasked = maskBaseUrlValue(baseUrl);
+    const apiKeyMasked = apiKey ? maskApiKeyValue(apiKey) : null;
 
     try {
       const insertRes = await db.query<ProviderRow>(

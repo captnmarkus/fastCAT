@@ -1,39 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { DynamicFieldsSection, type FieldSchema } from "./TermbaseFields";
 
-function loadSampleFields() {
-  const __filename = fileURLToPath(import.meta.url);
-  const repoRoot = path.resolve(path.dirname(__filename), "..", "..", "..");
-  const xmlPath = path.join(repoRoot, "kk_glossar.xml");
-  const xml = fs.readFileSync(xmlPath, "utf16le");
-
-  const extract = (pattern: RegExp, fallback: string) => {
-    const match = xml.match(pattern);
-    return match?.[1]?.trim() || fallback;
-  };
-
-  return {
-    category: extract(/<descrip type="Kategorie">([^<]+)<\/descrip>/i, "Kategorie"),
-    explanation: extract(/<descrip type="Erläuterung">([^<]+)<\/descrip>/i, "Erläuterung")
-  };
-}
+const EXPLANATION_FIELD = "Erl\u00E4uterung";
+const SAMPLE_FIELDS = {
+  category: "Technik",
+  explanation: "Ausf\u00FChrliche Beschreibung"
+};
 
 describe("DynamicFieldsSection", () => {
   it("renders schema-driven fields with picklists and textareas", () => {
-    const sample = loadSampleFields();
     const fields: FieldSchema[] = [
       {
         name: "Kategorie",
         level: "entry",
         type: "picklist",
-        picklistValues: [sample.category, "Other"]
+        picklistValues: [SAMPLE_FIELDS.category, "Other"]
       },
       {
-        name: "Erläuterung",
+        name: EXPLANATION_FIELD,
         level: "entry",
         type: "text"
       }
@@ -42,14 +27,14 @@ describe("DynamicFieldsSection", () => {
     const html = renderToStaticMarkup(
       <DynamicFieldsSection
         fields={fields}
-        values={{ Kategorie: sample.category, "Erläuterung": sample.explanation }}
+        values={{ Kategorie: SAMPLE_FIELDS.category, [EXPLANATION_FIELD]: SAMPLE_FIELDS.explanation }}
         onChange={() => {}}
       />
     );
 
     expect(html).toContain("Kategorie");
-    expect(html).toContain(sample.category);
-    expect(html).toContain("Erläuterung");
+    expect(html).toContain(SAMPLE_FIELDS.category);
+    expect(html).toContain(EXPLANATION_FIELD);
     expect(html).toContain("<select");
     expect(html).toContain("<textarea");
   });

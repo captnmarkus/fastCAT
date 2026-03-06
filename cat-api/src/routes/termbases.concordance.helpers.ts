@@ -1,19 +1,32 @@
 import { toText } from "../utils.js";
 import type { ConcordanceMatchType, TermStatus } from "./termbases.helpers.js";
 
+const UMLAUT_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\u00E4/g, "ae"],
+  [/\u00F6/g, "oe"],
+  [/\u00FC/g, "ue"],
+  [/\u00DF/g, "ss"],
+  [/\u00C3\u0192\u00C2\u00A4/g, "ae"],
+  [/\u00C3\u0192\u00C2\u00B6/g, "oe"],
+  [/\u00C3\u0192\u00C2\u00BC/g, "ue"],
+  [/\u00C3\u0192\u00C5\u00B8/g, "ss"],
+  [/\u00C3\u0192\u00C6\u2019\u00C3\u201A\u00C2\u00A4/g, "ae"],
+  [/\u00C3\u0192\u00C6\u2019\u00C3\u201A\u00C2\u00B6/g, "oe"],
+  [/\u00C3\u0192\u00C6\u2019\u00C3\u201A\u00C2\u00BC/g, "ue"],
+  [/\u00C3\u0192\u00C6\u2019\u00C3\u2026\u00C2\u00B8/g, "ss"]
+];
+
+function normalizeUmlauts(value: string) {
+  return UMLAUT_REPLACEMENTS.reduce(
+    (current, [pattern, replacement]) => current.replace(pattern, replacement),
+    value
+  );
+}
+
 export function normalizeConcordanceText(value: any): string {
   const raw = toText(value).toLowerCase();
   if (!raw.trim()) return "";
-  const umlauted = raw
-    .replace(/Ã¤/g, "ae")
-    .replace(/Ã¶/g, "oe")
-    .replace(/Ã¼/g, "ue")
-    .replace(/ÃŸ/g, "ss")
-    .replace(/ÃƒÂ¤/g, "ae")
-    .replace(/ÃƒÂ¶/g, "oe")
-    .replace(/ÃƒÂ¼/g, "ue")
-    .replace(/ÃƒÅ¸/g, "ss");
-  return umlauted
+  return normalizeUmlauts(raw)
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();

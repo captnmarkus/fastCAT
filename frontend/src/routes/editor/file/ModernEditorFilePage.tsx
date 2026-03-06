@@ -46,6 +46,7 @@ import {
   type EditorHotkeyPlatform
 } from "../hotkeys/editorHotkeys";
 import ModernEditorFileLayout from "./ModernEditorFileLayout";
+import { SYMBOL_PICKER_ITEMS as MODERN_EDITOR_SYMBOL_PICKER_ITEMS } from "./modernEditorSymbols";
 import "./modern-editor.css";
 
 type BottomTab = "history" | "qa" | "segment_comments" | "document_comments" | "rendered_preview" | "rendered_status";
@@ -2560,7 +2561,7 @@ export default function ModernEditorFilePage(props: {
           sourceSearch,
           statusFilter,
           stripInline,
-          SYMBOL_PICKER_ITEMS,
+          SYMBOL_PICKER_ITEMS: MODERN_EDITOR_SYMBOL_PICKER_ITEMS,
           symbolsMenuRef,
           targetLang: editor.targetLang,
           targetSearch,
