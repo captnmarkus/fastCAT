@@ -93,30 +93,6 @@ const HOTKEY_PREF_KEY_PREFIX = "fc:editor:modern:hotkeys:";
 const RENDERED_PREVIEW_DEBOUNCE_MS = 1500;
 const RENDERED_PREVIEW_POLL_MS = 1200;
 const RENDERED_PREVIEW_POLL_TIMEOUT_MS = 60_000;
-const SYMBOL_PICKER_ITEMS = [
-  "©",
-  "®",
-  "™",
-  "°",
-  "±",
-  "≈",
-  "≠",
-  "≤",
-  "≥",
-  "→",
-  "←",
-  "•",
-  "…",
-  "€",
-  "£",
-  "¥",
-  "§",
-  "¶",
-  "—",
-  "–",
-  "✓",
-  "✕"
-] as const;
 
 const BULK_SKIP_REASON_LABELS: Record<string, string> = {
   already_reviewed: "Already approved",

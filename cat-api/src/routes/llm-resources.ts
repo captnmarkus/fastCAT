@@ -21,27 +21,6 @@ function isBlank(value: any) {
   return String(value ?? "").trim().length === 0;
 }
 
-function maskApiKey(value: string) {
-  const v = String(value || "").trim();
-  if (!v) return "";
-  const last4 = v.length >= 4 ? v.slice(-4) : "";
-  const prefix = v.startsWith("sk-") ? "sk-" : "";
-  return `${prefix}••••${last4 || "••••"}`;
-}
-
-function maskBaseUrl(value: string) {
-  const v = String(value || "").trim();
-  if (!v) return "";
-  try {
-    const url = new URL(v);
-    const host = url.host;
-    if (!host) return "stored";
-    return `${url.protocol}//${host}/…`;
-  } catch {
-    return "stored";
-  }
-}
-
 type ProviderRow = {
   id: number;
   name: string;
