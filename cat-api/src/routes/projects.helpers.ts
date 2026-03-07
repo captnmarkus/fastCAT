@@ -763,6 +763,7 @@ export type ProjectTaskRow = {
   file_id: number;
   target_lang: string;
   translator_user: string;
+  reviewer_user: string | null;
   status: string;
   total: number | null;
   draft: number | null;
@@ -776,6 +777,7 @@ export async function listProjectFiles(projectId: number) {
             t.file_id,
             t.target_lang,
             t.translator_user,
+            t.reviewer_user,
             t.status,
             COALESCE(s.total, 0)::int AS total,
             COALESCE(s.draft, 0)::int AS draft,
@@ -802,6 +804,7 @@ export async function listProjectFiles(projectId: number) {
       taskId: number;
       targetLang: string;
       assigneeId: string;
+      reviewerUserId: string | null;
       status: string;
       segmentStats: { total: number; draft: number; underReview: number; reviewed: number };
     }>
@@ -827,6 +830,7 @@ export async function listProjectFiles(projectId: number) {
       taskId: Number(row.id),
       targetLang: String(row.target_lang || "").trim(),
       assigneeId: String(row.translator_user || "").trim(),
+      reviewerUserId: String(row.reviewer_user || "").trim() || null,
       status: taskStatus,
       segmentStats: {
         total,

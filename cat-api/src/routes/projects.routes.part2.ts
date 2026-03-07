@@ -22,7 +22,6 @@ import { extractXmlSegmentsWithTemplate } from "../lib/xml-extraction.js";
 import { segmentPlainText, toText } from "../utils.js";
 import { normalizeLanguageTag } from "../lib/language-catalog.js";
 import AdmZip from "adm-zip";
-import XLSX from "xlsx";
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import {
   normalizeEngineDefaultsByTarget,

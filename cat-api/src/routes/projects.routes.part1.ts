@@ -22,7 +22,6 @@ import { extractXmlSegmentsWithTemplate } from "../lib/xml-extraction.js";
 import { segmentPlainText, toText } from "../utils.js";
 import { normalizeLanguageTag } from "../lib/language-catalog.js";
 import AdmZip from "adm-zip";
-import XLSX from "xlsx";
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import {
   normalizeEngineDefaultsByTarget,
@@ -229,187 +228,68 @@ export async function registerProjectRoutesPart1(app: FastifyInstance) {
       return { projects: await Promise.all(rows.map(rowToProject)) };
     }
 
-    if (isManagerUser(user)) {
-      if (!departmentId) {
-        return reply.code(403).send({ error: "Department assignment required" });
-      }
-      const res = await db.query<ProjectRow>(
-        `SELECT p.id,
-                p.name,
-                p.description,
-                p.src_lang,
-                p.tgt_lang,
-                p.target_langs,
-                p.status,
-                p.published_at,
-                p.init_error,
-                p.provisioning_started_at,
-                p.provisioning_updated_at,
-                p.provisioning_finished_at,
-                p.provisioning_progress,
-                p.provisioning_current_step,
-                p.created_by,
-                p.assigned_user,
-                p.tm_sample,
-                p.tm_sample_tm_id,
-                p.glossary_id,
-                p.department_id,
-                d.name AS department_name,
-                p.project_settings,
-                p.created_at,
-                COALESCE(seg.last_modified_at, p.created_at) AS last_modified_at,
-                COALESCE(err.error_count, 0) AS error_count
-         FROM projects p
-         LEFT JOIN departments d ON d.id = p.department_id
-         LEFT JOIN (
-           SELECT project_id, MAX(updated_at) AS last_modified_at
-           FROM segments
-           GROUP BY project_id
-         ) seg ON seg.project_id = p.id
-         LEFT JOIN (
-           SELECT s.project_id, COUNT(*)::int AS error_count
-           FROM segment_qa qa
-           JOIN segments s ON s.id = qa.segment_id
-           WHERE qa.resolved = FALSE
-           GROUP BY s.project_id
-         ) err ON err.project_id = p.id
-         WHERE p.department_id = $1
-           AND COALESCE(p.project_settings->>'appAgentUploadSession', 'false') <> 'true'
-           AND ($3::boolean = FALSE OR p.assigned_user = $2 OR (p.assigned_user IS NULL AND p.created_by = $2))
-         ORDER BY p.created_at DESC`,
-        [departmentId, userId, scopeCurrent]
-      );
-      rows = res.rows;
-      return { projects: await Promise.all(rows.map(rowToProject)) };
-    }
-
     if (!userId) return reply.code(401).send({ error: "Unauthorized" });
     if (!departmentId) return reply.code(403).send({ error: "Department assignment required" });
-
-    try {
-      await ensureUserBucketsInitialized(userId);
-      const client = getRedisClient();
-
-      const created = await client.zRangeWithScores(userProjectsCreatedKey(userId), 0, -1, { REV: true });
-      const assigned = await client.zRangeWithScores(userProjectsAssignedKey(userId), 0, -1, { REV: true });
-
-      const scoreMap = new Map<number, number>();
-      for (const entry of [...created, ...assigned]) {
-        const id = Number((entry as any).value);
-        if (!Number.isFinite(id)) continue;
-        const score = Number((entry as any).score);
-        if (!Number.isFinite(score)) continue;
-        scoreMap.set(id, Math.max(scoreMap.get(id) ?? 0, score));
-      }
-
-      const orderedIds = Array.from(scoreMap.entries())
-        .sort((a, b) => b[1] - a[1])
-        .map(([id]) => id);
-
-      if (orderedIds.length === 0) return { projects: [] };
-
-      const res = await db.query<ProjectRow>(
-        `SELECT p.id,
-                p.name,
-                p.description,
-                p.src_lang,
-                p.tgt_lang,
-                p.target_langs,
-                p.status,
-                p.published_at,
-                p.init_error,
-                p.provisioning_started_at,
-                p.provisioning_updated_at,
-                p.provisioning_finished_at,
-                p.provisioning_progress,
-                p.provisioning_current_step,
-                p.created_by,
-                p.assigned_user,
-                p.tm_sample,
-                p.tm_sample_tm_id,
-                p.glossary_id,
-                p.department_id,
-                d.name AS department_name,
-                p.project_settings,
-                p.created_at,
-                COALESCE(seg.last_modified_at, p.created_at) AS last_modified_at,
-                COALESCE(err.error_count, 0) AS error_count
-         FROM projects p
-         LEFT JOIN departments d ON d.id = p.department_id
-         LEFT JOIN (
-           SELECT project_id, MAX(updated_at) AS last_modified_at
-           FROM segments
-           GROUP BY project_id
-         ) seg ON seg.project_id = p.id
-         LEFT JOIN (
-           SELECT s.project_id, COUNT(*)::int AS error_count
-           FROM segment_qa qa
-           JOIN segments s ON s.id = qa.segment_id
-           WHERE qa.resolved = FALSE
-           GROUP BY s.project_id
-         ) err ON err.project_id = p.id
-         WHERE p.id = ANY($1::int[])
-           AND p.department_id = $2
-           AND COALESCE(p.project_settings->>'appAgentUploadSession', 'false') <> 'true'
-         ORDER BY p.created_at DESC`,
-        [orderedIds, departmentId]
-      );
-
-      const byId = new Map<number, ProjectRow>();
-      res.rows.forEach((row) => byId.set(Number(row.id), row));
-      rows = orderedIds.map((id) => byId.get(id)).filter(Boolean) as ProjectRow[];
-      return { projects: await Promise.all(rows.map(rowToProject)) };
-    } catch {
-      // Fallback to DB query if Redis is unavailable.
-      const res = await db.query<ProjectRow>(
-            `SELECT p.id,
-                    p.name,
-                    p.description,
-                    p.src_lang,
-                    p.tgt_lang,
-                    p.target_langs,
-                    p.status,
-                    p.published_at,
-                    p.init_error,
-                    p.provisioning_started_at,
-                    p.provisioning_updated_at,
-                    p.provisioning_finished_at,
-                    p.provisioning_progress,
-                    p.provisioning_current_step,
-                    p.created_by,
-                    p.assigned_user,
-                    p.tm_sample,
-                    p.tm_sample_tm_id,
-                    p.glossary_id,
-                    p.department_id,
-                    d.name AS department_name,
-                    p.project_settings,
-                    p.created_at,
-                    COALESCE(seg.last_modified_at, p.created_at) AS last_modified_at,
-                    COALESCE(err.error_count, 0) AS error_count
-             FROM projects p
-             LEFT JOIN departments d ON d.id = p.department_id
-             LEFT JOIN (
-               SELECT project_id, MAX(updated_at) AS last_modified_at
-               FROM segments
-               GROUP BY project_id
-             ) seg ON seg.project_id = p.id
-             LEFT JOIN (
-               SELECT s.project_id, COUNT(*)::int AS error_count
-               FROM segment_qa qa
-               JOIN segments s ON s.id = qa.segment_id
-               WHERE qa.resolved = FALSE
-               GROUP BY s.project_id
-             ) err ON err.project_id = p.id
-             WHERE p.department_id = $2
-               AND (p.assigned_user = $1 OR (p.assigned_user IS NULL AND p.created_by = $1))
-               AND COALESCE(p.project_settings->>'appAgentUploadSession', 'false') <> 'true'
-             ORDER BY p.created_at DESC`,
-            [userId, departmentId]
-          );
-      rows = res.rows;
-      return { projects: await Promise.all(rows.map(rowToProject)) };
-    }
+    const res = await db.query<ProjectRow>(
+      `SELECT p.id,
+              p.name,
+              p.description,
+              p.src_lang,
+              p.tgt_lang,
+              p.target_langs,
+              p.status,
+              p.published_at,
+              p.init_error,
+              p.provisioning_started_at,
+              p.provisioning_updated_at,
+              p.provisioning_finished_at,
+              p.provisioning_progress,
+              p.provisioning_current_step,
+              p.created_by,
+              p.assigned_user,
+              p.tm_sample,
+              p.tm_sample_tm_id,
+              p.glossary_id,
+              p.department_id,
+              d.name AS department_name,
+              p.project_settings,
+              p.created_at,
+              COALESCE(seg.last_modified_at, p.created_at) AS last_modified_at,
+              COALESCE(err.error_count, 0) AS error_count
+       FROM projects p
+       LEFT JOIN departments d ON d.id = p.department_id
+       LEFT JOIN (
+         SELECT project_id, MAX(updated_at) AS last_modified_at
+         FROM segments
+         GROUP BY project_id
+       ) seg ON seg.project_id = p.id
+       LEFT JOIN (
+         SELECT s.project_id, COUNT(*)::int AS error_count
+         FROM segment_qa qa
+         JOIN segments s ON s.id = qa.segment_id
+         WHERE qa.resolved = FALSE
+         GROUP BY s.project_id
+       ) err ON err.project_id = p.id
+       WHERE p.department_id = $1
+         AND COALESCE(p.project_settings->>'appAgentUploadSession', 'false') <> 'true'
+         AND (
+           LOWER(COALESCE(p.assigned_user, '')) = LOWER($2)
+           OR (p.assigned_user IS NULL AND LOWER(COALESCE(p.created_by, '')) = LOWER($2))
+           OR EXISTS (
+             SELECT 1
+             FROM translation_tasks t
+             WHERE t.project_id = p.id
+               AND (
+                 LOWER(COALESCE(t.translator_user, '')) = LOWER($2)
+                 OR LOWER(COALESCE(t.reviewer_user, '')) = LOWER($2)
+               )
+           )
+         )
+       ORDER BY p.created_at DESC`,
+      [departmentId, userId]
+    );
+    rows = res.rows;
+    return { projects: await Promise.all(rows.map(rowToProject)) };
   });
 
   // --- GET Inbox (task-level work items) ---
@@ -428,6 +308,7 @@ export async function registerProjectRoutesPart1(app: FastifyInstance) {
       src_lang: string;
       target_lang: string;
       translator_user: string;
+      reviewer_user: string | null;
       created_by: string | null;
       project_owner: string | null;
       file_id: number;
@@ -453,6 +334,7 @@ export async function registerProjectRoutesPart1(app: FastifyInstance) {
                 p.src_lang,
                 t.target_lang,
                 t.translator_user,
+                t.reviewer_user,
                 p.created_by,
                 COALESCE(p.assigned_user, p.created_by) AS project_owner,
                 f.id AS file_id,
@@ -496,6 +378,7 @@ export async function registerProjectRoutesPart1(app: FastifyInstance) {
                 p.src_lang,
                 t.target_lang,
                 t.translator_user,
+                t.reviewer_user,
                 p.created_by,
                 COALESCE(p.assigned_user, p.created_by) AS project_owner,
                 f.id AS file_id,
@@ -525,7 +408,10 @@ export async function registerProjectRoutesPart1(app: FastifyInstance) {
            WHERE task_id IS NOT NULL
            GROUP BY task_id
          ) s ON s.task_id = t.id
-         WHERE t.translator_user = $1
+         WHERE (
+                 LOWER(COALESCE(t.translator_user, '')) = LOWER($1)
+                 OR LOWER(COALESCE(t.reviewer_user, '')) = LOWER($1)
+               )
            AND p.department_id = $2
            AND p.status = 'ready'
          ORDER BY COALESCE(s.last_modified_at, t.updated_at, f.created_at) DESC, t.id DESC`,
@@ -559,7 +445,10 @@ export async function registerProjectRoutesPart1(app: FastifyInstance) {
             : statusRaw
           : fallbackStatus;
 
-      const assignedTo = row.translator_user || row.created_by || null;
+      const reviewerMatchesCurrentUser =
+        row.reviewer_user != null && String(row.reviewer_user).trim().toLowerCase() === String(userId).trim().toLowerCase();
+      const assignedTo =
+        (reviewerMatchesCurrentUser ? row.reviewer_user : row.translator_user) || row.created_by || null;
       const progressPct = total > 0 ? Math.round((reviewed / total) * 100) : 0;
 
       return {
@@ -598,35 +487,8 @@ export async function registerProjectRoutesPart1(app: FastifyInstance) {
   app.get("/projects/:id/bucket", { preHandler: [requireAuth] }, async (req: any, reply) => {
     const projectId = Number(req.params.id);
     const user = getRequestUser(req);
-    const userId = requestUserId(user);
-    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
-
-    const projectRes = await db.query(
-      `SELECT id, assigned_user, created_by, department_id FROM projects WHERE id = $1`,
-      [projectId]
-    );
-    const accessRow = projectRes.rows[0] as any;
-    if (!accessRow) return reply.code(404).send({ error: "Project not found" });
-
-    if (!isAdminUser(user)) {
-      const departmentId = await requestUserDepartmentId(user);
-      if (!departmentId || Number(accessRow.department_id) !== Number(departmentId)) {
-        return reply.code(403).send({ error: "Project access denied" });
-      }
-
-      if (!isManagerUser(user)) {
-        const owner = accessRow.assigned_user ?? accessRow.created_by ?? null;
-        if (owner !== userId) {
-          const taskRes = await db.query(
-            `SELECT 1 FROM translation_tasks WHERE project_id = $1 AND translator_user = $2 LIMIT 1`,
-            [projectId, userId]
-          );
-          if ((taskRes.rowCount ?? 0) === 0) {
-            return reply.code(403).send({ error: "Project access denied" });
-          }
-        }
-      }
-    }
+    const accessRow = await ensureProjectAccess(projectId, user, reply);
+    if (!accessRow) return;
 
     const sourceRes = await db.query<{
       file_id: number;

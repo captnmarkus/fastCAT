@@ -1,5 +1,5 @@
 import AdmZip from "adm-zip";
-import XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import path from "path";
 import {
@@ -137,13 +137,13 @@ export async function buildPptxBuffer(lines: string[]): Promise<Buffer> {
   return Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
 }
 
-export function buildXlsxBuffer(lines: string[]): Buffer {
+export async function buildXlsxBuffer(lines: string[]): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Translations");
   const rows = lines.length > 0 ? lines.map((line) => [line]) : [[""]];
-  const sheet = XLSX.utils.aoa_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, sheet, "Translations");
-  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
-  return Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  rows.forEach((row) => sheet.addRow(row));
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
 }
 
 export function hasElementChildren(node: Element): boolean {

@@ -1,5 +1,6 @@
 import { db, withTransaction } from "../db.js";
 import { requestSegmentLlmPayload, extractTranslationText, SegmentLlmError } from "./segment-llm.js";
+import { normalizeRichTextRuns, projectTextToTemplateRuns } from "./rich-text.js";
 
 type LoggerLike = {
   info?: (obj: Record<string, any>, msg?: string) => void;
@@ -163,8 +164,14 @@ async function processJob(
     return;
   }
 
-  const segmentsRes = await db.query<{ id: number; tgt: string | null }>(
-    `SELECT id, tgt
+  const segmentsRes = await db.query<{
+    id: number;
+    src: string | null;
+    tgt: string | null;
+    src_runs: any;
+    tgt_runs: any;
+  }>(
+    `SELECT id, src, tgt, src_runs, tgt_runs
      FROM segments
      WHERE task_id = $1
      ORDER BY id ASC`,
@@ -211,6 +218,7 @@ async function processJob(
   let confirmedSample = false;
   const updateColumns = [
     "tgt",
+    "tgt_runs",
     "status",
     "state",
     "generated_by_llm",
@@ -240,6 +248,12 @@ async function processJob(
             logWith(log, "warn", { ...context, segmentId: seg.id }, "LLM returned empty translation");
             return { skipped: true };
           }
+          const sourceRuns = normalizeRichTextRuns(seg.src_runs, String(seg.src ?? ""));
+          const targetRuns = projectTextToTemplateRuns({
+            text: translation,
+            templateRuns: normalizeRichTextRuns(seg.tgt_runs, ""),
+            fallbackRuns: sourceRuns
+          });
 
           const preview = translation.slice(0, 30);
           logWith(
@@ -258,17 +272,18 @@ async function processJob(
           const updateRes = await db.query(
             `UPDATE segments
              SET tgt = $2,
+                 tgt_runs = $3,
                  status = 'draft',
                  state = 'nmt_draft',
                  generated_by_llm = TRUE,
                  source_type = 'nmt',
                  source_score = NULL,
                  source_match_id = NULL,
-                 updated_by = $3,
+                 updated_by = $4,
                  updated_at = NOW(),
                  version = version + 1
              WHERE id = $1`,
-            [seg.id, translation, "system"]
+            [seg.id, translation, JSON.stringify(targetRuns), "system"]
           );
           const rowCount = updateRes.rowCount ?? 0;
           logWith(

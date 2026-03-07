@@ -107,6 +107,7 @@ export type ProjectFileTask = {
   taskId: number;
   targetLang: string;
   assigneeId: string;
+  reviewerUserId?: string | null;
   status: string;
   segmentStats?: {
     total: number;

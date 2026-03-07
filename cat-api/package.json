@@ -20,6 +20,7 @@
     "@xmldom/xmldom": "^0.8.11",
     "adm-zip": "^0.5.16",
     "cheerio": "^1.0.0",
+    "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.3.2",
     "fastify": "^5.6.2",
     "node-fetch": "^3.3.2",
@@ -29,7 +30,6 @@
     "pptxgenjs": "^4.0.1",
     "redis": "^4.7.0",
     "sax": "^1.4.4",
-    "xlsx": "^0.18.5",
     "xpath": "^0.0.34"
   },
   "devDependencies": {

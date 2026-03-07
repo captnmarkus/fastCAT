@@ -3,9 +3,8 @@ import {
   ensureProjectReady,
   getRequestUser,
   isAdminUser,
-  isManagerUser,
   requestUserDepartmentId,
-  requestUserId
+  requestUserMatchesIdentifier
 } from "../middleware/auth.js";
 import {
   normalizeSegmentState,
@@ -235,6 +234,9 @@ export async function ensureTaskAccess(
     file_id: number;
     target_lang: string;
     translator_user: string;
+    reviewer_user: string | null;
+    assigned_user: string | null;
+    created_by: string | null;
     department_id: number | null;
     status: string;
     init_error: string | null;
@@ -244,6 +246,9 @@ export async function ensureTaskAccess(
             t.file_id,
             t.target_lang,
             t.translator_user,
+            t.reviewer_user,
+            p.assigned_user,
+            p.created_by,
             p.department_id,
             p.status,
             p.init_error
@@ -266,13 +271,16 @@ export async function ensureTaskAccess(
     reply.code(403).send({ error: "Task access denied" });
     return null;
   }
-  if (isManagerUser(user)) return row;
-  const userId = requestUserId(user);
-  if (!userId || String(row.translator_user) !== String(userId)) {
-    reply.code(403).send({ error: "Task access denied" });
-    return null;
+  if (
+    requestUserMatchesIdentifier(user, row.translator_user) ||
+    requestUserMatchesIdentifier(user, row.reviewer_user)
+  ) {
+    return row;
   }
-  return row;
+  const owner = row.assigned_user ?? row.created_by ?? null;
+  if (requestUserMatchesIdentifier(user, owner)) return row;
+  reply.code(403).send({ error: "Task access denied" });
+  return null;
 }
 
 export async function ensureTaskSegments(taskId: number) {

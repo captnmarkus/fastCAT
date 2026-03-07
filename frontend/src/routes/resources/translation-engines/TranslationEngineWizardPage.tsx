@@ -1,9 +1,15 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { AuthUser } from "../../../types/app";
 import { createTranslationEngine, listNmtProviders, type NmtProvider } from "../../../api";
 import WizardShell from "../../../components/ui/WizardShell";
 import WarningBanner from "../../../components/ui/WarningBanner";
+import { useLanguages } from "../../../features/languages/hooks";
+import { formatLanguageEntryLabel } from "../../../features/languages/utils";
+import {
+  buildTranslationEngineStarterDefaults,
+  resolveTranslationEngineStarterPair
+} from "./TranslationEngineWizardPage.defaults";
 
 type WizardStepKey = "basics" | "prompts" | "review";
 
@@ -14,8 +20,8 @@ const STEP_ORDER: Array<{ key: WizardStepKey; label: string }> = [
 ];
 
 const PLACEHOLDERS: Array<{ key: string; label: string }> = [
-  { key: "{source_language}", label: "Source language code/name" },
-  { key: "{target_language}", label: "Target language code/name" },
+  { key: "{source_language}", label: "Source language name" },
+  { key: "{target_language}", label: "Target language name" },
   { key: "{source_text}", label: "Source segment text" },
   { key: "{file_name}", label: "File name (optional)" },
   { key: "{project_name}", label: "Project name (optional)" }
@@ -37,6 +43,7 @@ function parseOptionalInt(value: string) {
 
 export default function TranslationEngineWizardPage({ currentUser }: { currentUser: AuthUser }) {
   const nav = useNavigate();
+  const { activeLanguages, activeSourceLanguages, activeTargetLanguages, defaults, loading: languagesLoading } = useLanguages();
 
   const [step, setStep] = useState<WizardStepKey>("basics");
   const [showValidation, setShowValidation] = useState(false);
@@ -51,6 +58,8 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [disabled, setDisabled] = useState(false);
+  const [sourceLang, setSourceLang] = useState("");
+  const [targetLang, setTargetLang] = useState("");
 
   const [llmProviderIdRaw, setLlmProviderIdRaw] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
@@ -59,6 +68,9 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
   const [temperatureRaw, setTemperatureRaw] = useState("");
   const [maxTokensRaw, setMaxTokensRaw] = useState("");
   const [topPRaw, setTopPRaw] = useState("");
+
+  const lastAutoSystemPromptRef = useRef("");
+  const lastAutoUserPromptRef = useRef("");
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +106,88 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
     if (!llmProviderId) return null;
     return providers.find((p) => p.id === llmProviderId) ?? null;
   }, [llmProviderId, providers]);
+
+  const languageOptions = useMemo(
+    () =>
+      activeLanguages.map((entry) => ({
+        canonical: entry.canonical,
+        label: formatLanguageEntryLabel(entry)
+      })),
+    [activeLanguages]
+  );
+
+  const starterPair = useMemo(
+    () =>
+      resolveTranslationEngineStarterPair({
+        sourceOptions: activeSourceLanguages.map((entry) => ({
+          canonical: entry.canonical,
+          label: formatLanguageEntryLabel(entry)
+        })),
+        targetOptions: activeTargetLanguages.map((entry) => ({
+          canonical: entry.canonical,
+          label: formatLanguageEntryLabel(entry)
+        })),
+        defaultSource: defaults.defaultSource,
+        defaultTargets: defaults.defaultTargets
+      }),
+    [activeSourceLanguages, activeTargetLanguages, defaults.defaultSource, defaults.defaultTargets]
+  );
+
+  useEffect(() => {
+    if (!sourceLang && starterPair.sourceLang) {
+      setSourceLang(starterPair.sourceLang);
+    }
+  }, [sourceLang, starterPair.sourceLang]);
+
+  useEffect(() => {
+    if (!targetLang && starterPair.targetLang) {
+      setTargetLang(starterPair.targetLang);
+      return;
+    }
+    if (targetLang && targetLang === sourceLang) {
+      const nextTarget =
+        activeTargetLanguages.find((entry) => entry.canonical !== sourceLang)?.canonical || starterPair.targetLang || "";
+      if (nextTarget && nextTarget !== targetLang) {
+        setTargetLang(nextTarget);
+      }
+    }
+  }, [activeTargetLanguages, sourceLang, starterPair.targetLang, targetLang]);
+
+  const starterDefaults = useMemo(
+    () =>
+      buildTranslationEngineStarterDefaults({
+        sourceLang: sourceLang || starterPair.sourceLang,
+        targetLang: targetLang || starterPair.targetLang,
+        languageOptions
+      }),
+    [languageOptions, sourceLang, starterPair.sourceLang, starterPair.targetLang, targetLang]
+  );
+
+  useEffect(() => {
+    const next = starterDefaults.systemPrompt;
+    setSystemPrompt((current) => {
+      if (!current.trim() || current === lastAutoSystemPromptRef.current) return next;
+      return current;
+    });
+    lastAutoSystemPromptRef.current = next;
+  }, [starterDefaults.systemPrompt]);
+
+  useEffect(() => {
+    const next = starterDefaults.userPromptTemplate;
+    setUserPromptTemplate((current) => {
+      if (!current.trim() || current === lastAutoUserPromptRef.current) return next;
+      return current;
+    });
+    lastAutoUserPromptRef.current = next;
+  }, [starterDefaults.userPromptTemplate]);
+
+  useEffect(() => {
+    setTemperatureRaw((current) => (current.trim() ? current : starterDefaults.temperatureRaw));
+  }, [starterDefaults.temperatureRaw]);
+
+  useEffect(() => {
+    setMaxTokensRaw((current) => (current.trim() ? current : starterDefaults.maxTokensRaw));
+  }, [starterDefaults.maxTokensRaw]);
 
   const basicsErrors = useMemo(() => {
     const out: Record<string, string> = {};
@@ -269,9 +363,43 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
           <>
             <div className="fw-semibold mb-2">Prompts + LLM selection</div>
             <div className="text-muted small mb-3">
-              LLM selection is mandatory. Language pair is injected at runtime from the project/file.
+              LLM selection is mandatory. Starter defaults use the selected language pair and stay editable.
             </div>
             <div className="row g-3">
+              <div className="col-md-6">
+                <label className="form-label">Starter source language</label>
+                <select
+                  className="form-select"
+                  value={sourceLang}
+                  onChange={(e) => setSourceLang(e.target.value)}
+                  disabled={saving || languagesLoading}
+                >
+                  <option value="">{languagesLoading ? "Loading..." : "Select a source language"}</option>
+                  {activeSourceLanguages.map((entry) => (
+                    <option key={entry.canonical} value={entry.canonical}>
+                      {formatLanguageEntryLabel(entry)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="col-md-6">
+                <label className="form-label">Starter target language</label>
+                <select
+                  className="form-select"
+                  value={targetLang}
+                  onChange={(e) => setTargetLang(e.target.value)}
+                  disabled={saving || languagesLoading}
+                >
+                  <option value="">{languagesLoading ? "Loading..." : "Select a target language"}</option>
+                  {activeTargetLanguages.map((entry) => (
+                    <option key={entry.canonical} value={entry.canonical} disabled={entry.canonical === sourceLang}>
+                      {formatLanguageEntryLabel(entry)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="col-lg-8">
                 <label className="form-label">LLM Provider</label>
                 <select
@@ -283,20 +411,19 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
                   <option value="">{providersLoading ? "Loading..." : "Select a provider"}</option>
                   {providers.map((p) => (
                     <option key={p.id} value={String(p.id)}>
-                      {p.title} — {p.model}
+                      {p.title} - {p.model}
                     </option>
                   ))}
                 </select>
                 {showValidation && promptsErrors.llmProviderId ? <div className="invalid-feedback">{promptsErrors.llmProviderId}</div> : null}
                 {selectedProvider ? (
                   <div className="form-text text-muted">
-                    Vendor: {selectedProvider.vendor} • Base URL: {selectedProvider.baseUrlMasked} • API Key: {selectedProvider.apiKeyMasked}
+                    Vendor: {selectedProvider.vendor} | Base URL: {selectedProvider.baseUrlMasked} | API Key: {selectedProvider.apiKeyMasked}
                   </div>
                 ) : (
-                  <div className="form-text text-muted">
-                    Create providers under Resources → NMT/LLM Providers.
-                  </div>
+                  <div className="form-text text-muted">Create providers under Resources / NMT/LLM Providers.</div>
                 )}
+                <div className="form-text text-muted">Starter instruction: {starterDefaults.instruction}</div>
               </div>
 
               <div className="col-lg-4">
@@ -305,7 +432,7 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
                   <div className="d-flex flex-column gap-1">
                     {PLACEHOLDERS.map((p) => (
                       <div key={p.key} className="small">
-                        <span className="font-monospace">{p.key}</span> <span className="text-muted">— {p.label}</span>
+                        <span className="font-monospace">{p.key}</span> <span className="text-muted">- {p.label}</span>
                       </div>
                     ))}
                   </div>
@@ -320,6 +447,7 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
                   value={systemPrompt}
                   onChange={(e) => setSystemPrompt(e.target.value)}
                   disabled={saving}
+                  placeholder={starterDefaults.systemPrompt}
                 />
                 {showValidation && promptsErrors.systemPrompt ? <div className="invalid-feedback">{promptsErrors.systemPrompt}</div> : null}
               </div>
@@ -332,7 +460,7 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
                   value={userPromptTemplate}
                   onChange={(e) => setUserPromptTemplate(e.target.value)}
                   disabled={saving}
-                  placeholder={`Translate from {source_language} to {target_language}.\n\nSource:\n{source_text}`}
+                  placeholder={starterDefaults.userPromptTemplate}
                 />
                 {showValidation && promptsErrors.userPromptTemplate ? <div className="invalid-feedback">{promptsErrors.userPromptTemplate}</div> : null}
               </div>
@@ -346,7 +474,7 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
                       className={`form-control ${showValidation && promptsErrors.temperature ? "is-invalid" : ""}`}
                       value={temperatureRaw}
                       onChange={(e) => setTemperatureRaw(e.target.value)}
-                      placeholder="e.g. 0.2"
+                      placeholder={starterDefaults.temperatureRaw}
                       disabled={saving}
                     />
                     {showValidation && promptsErrors.temperature ? <div className="invalid-feedback">{promptsErrors.temperature}</div> : null}
@@ -357,7 +485,7 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
                       className={`form-control ${showValidation && promptsErrors.maxTokens ? "is-invalid" : ""}`}
                       value={maxTokensRaw}
                       onChange={(e) => setMaxTokensRaw(e.target.value)}
-                      placeholder="e.g. 512"
+                      placeholder={starterDefaults.maxTokensRaw}
                       disabled={saving}
                     />
                     {showValidation && promptsErrors.maxTokens ? <div className="invalid-feedback">{promptsErrors.maxTokens}</div> : null}
@@ -397,14 +525,18 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
                 <div className="text-muted small">Description</div>
                 <div className="fw-semibold">{description.trim() || "-"}</div>
               </div>
+              <div className="col-12">
+                <div className="text-muted small">Starter language pair</div>
+                <div className="fw-semibold">
+                  {starterDefaults.sourceLabel} - {starterDefaults.targetLabel}
+                </div>
+              </div>
 
               <div className="col-12">
                 <div className="text-muted small">LLM provider</div>
-                <div className="fw-semibold">
-                  {selectedProvider ? `${selectedProvider.title} — ${selectedProvider.model}` : "-"}
-                </div>
+                <div className="fw-semibold">{selectedProvider ? `${selectedProvider.title} - ${selectedProvider.model}` : "-"}</div>
                 <div className="text-muted small">
-                  {selectedProvider ? `Vendor: ${selectedProvider.vendor} • API Key: ${selectedProvider.apiKeyMasked}` : ""}
+                  {selectedProvider ? `Vendor: ${selectedProvider.vendor} | API Key: ${selectedProvider.apiKeyMasked}` : ""}
                 </div>
               </div>
 
@@ -412,14 +544,14 @@ export default function TranslationEngineWizardPage({ currentUser }: { currentUs
                 <div className="text-muted small mb-1">System prompt (preview)</div>
                 <div className="border rounded p-2 bg-white small" style={{ whiteSpace: "pre-wrap" }}>
                   {systemPrompt.trim() ? systemPrompt.trim().slice(0, 600) : "-"}
-                  {systemPrompt.trim().length > 600 ? "…" : ""}
+                  {systemPrompt.trim().length > 600 ? "..." : ""}
                 </div>
               </div>
               <div className="col-12">
                 <div className="text-muted small mb-1">User prompt template (preview)</div>
                 <div className="border rounded p-2 bg-white small" style={{ whiteSpace: "pre-wrap" }}>
                   {userPromptTemplate.trim() ? userPromptTemplate.trim().slice(0, 800) : "-"}
-                  {userPromptTemplate.trim().length > 800 ? "…" : ""}
+                  {userPromptTemplate.trim().length > 800 ? "..." : ""}
                 </div>
               </div>
 

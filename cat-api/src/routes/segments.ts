@@ -6,6 +6,7 @@ import {
   ensureProjectReady,
   getRequestUser,
   requestUserId,
+  requestUserMatchesIdentifier,
   isAdminUser,
   isManagerUser
 } from "../middleware/auth.js";
@@ -74,6 +75,7 @@ type BulkCandidateRow = {
   version: number;
   task_status: string | null;
   translator_user: string | null;
+  reviewer_user: string | null;
 };
 
 type EvaluatedBulkCandidate = {
@@ -217,25 +219,20 @@ function pushTrackedId(target: number[], id: number) {
   target.push(id);
 }
 
-function normalizeUserKey(value: unknown): string {
-  return String(value ?? "").trim().toLowerCase();
-}
-
 function canApproveBulkRow(params: {
   row: BulkCandidateRow;
-  requesterId: string | null;
+  requester: ReturnType<typeof getRequestUser>;
   canApproveAny: boolean;
   projectOwner: string | null;
 }): boolean {
   if (params.canApproveAny) return true;
-  const requester = normalizeUserKey(params.requesterId);
-  if (!requester) return false;
   if (params.row.task_id != null) {
-    const translator = normalizeUserKey(params.row.translator_user);
-    return Boolean(translator) && translator === requester;
+    return (
+      requestUserMatchesIdentifier(params.requester, params.row.translator_user) ||
+      requestUserMatchesIdentifier(params.requester, params.row.reviewer_user)
+    );
   }
-  const owner = normalizeUserKey(params.projectOwner);
-  return Boolean(owner) && owner === requester;
+  return requestUserMatchesIdentifier(params.requester, params.projectOwner);
 }
 
 function computeBulkProgress(total: number, processed: number, approved: number, skipped: number): BulkJobProgress {
@@ -335,7 +332,8 @@ async function loadBulkApproveCandidates(params: {
             s.source_type,
             s.version,
             t.status AS task_status,
-            t.translator_user
+            t.translator_user,
+            t.reviewer_user
      FROM segments s
      LEFT JOIN translation_tasks t ON t.id = s.task_id
      WHERE ${where.join(" AND ")}
@@ -361,7 +359,7 @@ async function persistBulkQaIssuePayload(updates: Array<{ id: number; summary: I
 async function evaluateBulkApproveCandidates(params: {
   rows: BulkCandidateRow[];
   qaPolicy: BulkApproveQaPolicy;
-  requesterId: string | null;
+  requester: ReturnType<typeof getRequestUser>;
   canApproveAny: boolean;
   projectOwner: string | null;
   persistQaPayload: boolean;
@@ -397,7 +395,7 @@ async function evaluateBulkApproveCandidates(params: {
     const readOnlyTask = row.task_id != null && isTaskReadOnlyStatus(row.task_status);
     const permissionGranted = canApproveBulkRow({
       row,
-      requesterId: params.requesterId,
+      requester: params.requester,
       canApproveAny: params.canApproveAny,
       projectOwner: params.projectOwner
     });
@@ -1649,7 +1647,7 @@ export async function segmentRoutes(app: FastifyInstance) {
     const estimate = await evaluateBulkApproveCandidates({
       rows,
       qaPolicy,
-      requesterId,
+      requester: user,
       canApproveAny,
       projectOwner,
       persistQaPayload: qaPolicy === "require_clean"

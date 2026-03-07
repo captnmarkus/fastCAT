@@ -278,6 +278,7 @@ export type EditorFileMeta = {
     id: number;
     targetLang: string;
     assigneeId?: string;
+    reviewerUserId?: string | null;
     status?: string;
     tmxId?: number | null;
   };

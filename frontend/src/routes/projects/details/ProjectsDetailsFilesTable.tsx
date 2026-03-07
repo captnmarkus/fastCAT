@@ -58,6 +58,28 @@ export default function ProjectsDetailsFilesTable(props: any) {
             const isExpanded = Boolean(expandedFiles[file.fileId]);
             const outputsCount = visibleTasks.length;
             const outputsLabel = `${outputsCount} output${outputsCount === 1 ? "" : "s"}`;
+            const downloadableOutputs = visibleTasks
+              .map((task: any) => {
+                const outputKey = rowImportKey(file.fileId, task.targetLang);
+                const outputEntry = outputByFileLang.get(outputKey);
+                if (!outputEntry) return null;
+                const meta = resolveTaskMeta(task.targetLang);
+                const label = meta?.label || task.targetLang.toUpperCase();
+                return {
+                  key: outputKey,
+                  label,
+                  targetLang: task.targetLang,
+                  filename: outputEntry.filename || buildTargetOutputFilename(file.originalFilename, task.targetLang),
+                  createdAt: outputEntry.createdAt || null
+                };
+              })
+              .filter(Boolean) as Array<{
+              key: string;
+              label: string;
+              targetLang: string;
+              filename: string;
+              createdAt: string | null;
+            }>;
 
             return (
               <React.Fragment key={file.fileId}>
@@ -109,10 +131,30 @@ export default function ProjectsDetailsFilesTable(props: any) {
                     </div>
                   </td>
                   <td className="text-muted small">
-                    {outputsCount > 0 ? (
+                    {downloadableOutputs.length > 0 ? (
+                      <div className="d-flex flex-column gap-2">
+                        {downloadableOutputs.map((output) => (
+                          <div key={output.key} className="d-flex flex-column gap-1">
+                            <button
+                              type="button"
+                              className="btn btn-link btn-sm p-0 text-start text-decoration-none"
+                              onClick={() => handleDownloadOutput(file.fileId, output.targetLang, output.filename)}
+                              disabled={!isProjectReady || bucketDownloading === output.filename}
+                              title={isProjectReady ? "Download output" : "Available when provisioning is complete"}
+                            >
+                              <i className="bi bi-download me-1" aria-hidden="true" />
+                              {output.label}
+                            </button>
+                            <span className="text-muted">
+                              Ready{output.createdAt ? ` ${formatDateTimeShort(output.createdAt)}` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : outputsCount > 0 ? (
                       <div className="d-flex flex-column gap-1">
                         <span>{outputsLabel}</span>
-                        <span className="text-muted">Expand to download</span>
+                        <span className="text-muted">Output will appear here when ready</span>
                       </div>
                     ) : (
                       <span className="text-muted">No outputs</span>
@@ -159,11 +201,13 @@ export default function ProjectsDetailsFilesTable(props: any) {
                               const taskStatusClass = statusToneClass(taskStatus);
                               const taskPct = computeProgressPct([task], null);
                               const outputKey = rowImportKey(file.fileId, task.targetLang);
-                              const hasOutput = outputByFileLang.has(outputKey);
+                              const outputEntry = outputByFileLang.get(outputKey);
+                              const hasOutput = Boolean(outputEntry);
                               const canImportToTm = isProjectReady && isProjectOwner && taskStatus === "reviewed" && hasOutput;
                               const importState = rowImportState[outputKey];
                               const isImporting = importingRowKey === outputKey;
-                              const outputFilename = buildTargetOutputFilename(file.originalFilename, task.targetLang);
+                              const outputFilename =
+                                outputEntry?.filename || buildTargetOutputFilename(file.originalFilename, task.targetLang);
                               return (
                                 <tr key={`${file.fileId}:${task.taskId}`}>
                                   <td>
@@ -176,7 +220,7 @@ export default function ProjectsDetailsFilesTable(props: any) {
                                       <span className="fw-semibold">{label}</span>
                                     </div>
                                   </td>
-                                  <td className="text-muted small">{task.assigneeId || "unassigned"}</td>
+                                  <td className="text-muted small">{task.assigneeId || task.reviewerUserId || "unassigned"}</td>
                                   <td>
                                     <span className={`badge fc-status-pill ${taskStatusClass}`}>{taskStatusLabel}</span>
                                   </td>
@@ -199,16 +243,21 @@ export default function ProjectsDetailsFilesTable(props: any) {
                                   </td>
                                   <td>
                                     {hasOutput ? (
-                                      <button
-                                        type="button"
-                                        className="btn btn-link btn-sm p-0 text-decoration-none"
-                                        onClick={() => handleDownloadOutput(file.fileId, task.targetLang, outputFilename)}
-                                        disabled={!isProjectReady || bucketDownloading === outputFilename}
-                                        title={isProjectReady ? "Download output" : "Available when provisioning is complete"}
-                                      >
-                                        <i className="bi bi-download me-1" aria-hidden="true" />
-                                        Output
-                                      </button>
+                                      <div className="d-flex flex-column gap-1">
+                                        <button
+                                          type="button"
+                                          className="btn btn-link btn-sm p-0 text-start text-decoration-none"
+                                          onClick={() => handleDownloadOutput(file.fileId, task.targetLang, outputFilename)}
+                                          disabled={!isProjectReady || bucketDownloading === outputFilename}
+                                          title={isProjectReady ? "Download output" : "Available when provisioning is complete"}
+                                        >
+                                          <i className="bi bi-download me-1" aria-hidden="true" />
+                                          Output
+                                        </button>
+                                        <span className="text-muted small">
+                                          Ready{outputEntry?.createdAt ? ` ${formatDateTimeShort(outputEntry.createdAt)}` : ""}
+                                        </span>
+                                      </div>
                                     ) : (
                                       <span className="text-muted small">Not generated</span>
                                     )}

@@ -21,7 +21,6 @@ import path from "path";
 import AdmZip from "adm-zip";
 import xpath from "xpath";
 import { DOMParser } from "@xmldom/xmldom";
-import XLSX from "xlsx";
 
 import {
   appendMissingLanguageErrors,
@@ -205,7 +204,7 @@ export function registerTermbaseImportRoutes(app: FastifyInstance) {
     const stored = await getObjectBuffer({ key: importRow.source_object_key });
     let text = "";
     try {
-      text = importType === "xlsx" ? parseXlsxToCsv(stored.buf) : decodeGlossaryBuffer(stored.buf);
+      text = importType === "xlsx" ? await parseXlsxToCsv(stored.buf) : decodeGlossaryBuffer(stored.buf);
     } catch (err: any) {
       return reply.code(400).send({ error: err?.message || "Failed to parse import file." });
     }

@@ -2,6 +2,7 @@ import fetch from "node-fetch";
 import { db } from "../db.js";
 import { CONFIG } from "../config.js";
 import { applyLanguageProcessingRules } from "./language-processing.js";
+import { formatLanguageNameForPrompt } from "./translation-prompt.js";
 
 export class SegmentLlmError extends Error {
   status: number;
@@ -143,6 +144,8 @@ export async function requestSegmentLlmPayload(params: {
 
   const translationEngineId =
     params.engineIdOverride ?? (seg.translation_engine_id != null ? Number(seg.translation_engine_id) : null);
+  const sourceLanguageName = formatLanguageNameForPrompt(String(seg.src_lang || "").trim()) || String(seg.src_lang || "").trim();
+  const targetLanguageName = formatLanguageNameForPrompt(String(seg.tgt_lang || "").trim()) || String(seg.tgt_lang || "").trim();
 
   let projectSettings: Record<string, any> = {};
   if (seg.project_settings && typeof seg.project_settings === "object") {
@@ -194,7 +197,7 @@ export async function requestSegmentLlmPayload(params: {
       `Previous sentence context: "${prevSeg?.tgt || prevSeg?.src || ""}"`
     ].join("\n");
 
-    const userPrompt = `Translate the following text from ${seg.src_lang} to ${seg.tgt_lang}.
+    const userPrompt = `Translate the following text from ${sourceLanguageName} to ${targetLanguageName}.
 Source: """${seg.src}"""`;
 
     try {
@@ -266,8 +269,8 @@ Source: """${seg.src}"""`;
   if (!provider.secret_enc) throw new SegmentLlmError(400, "Selected LLM provider is missing credentials.");
 
   const variables: Record<string, string> = {
-    source_language: String(seg.src_lang || "").trim(),
-    target_language: String(seg.tgt_lang || "").trim(),
+    source_language: sourceLanguageName,
+    target_language: targetLanguageName,
     source_text: String(seg.src ?? ""),
     file_name: String(seg.file_name || ""),
     project_name: String(seg.project_name || "")

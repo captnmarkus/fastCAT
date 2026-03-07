@@ -4,7 +4,7 @@ import { normalizeFieldLabel } from "../lib/termbase-import.js";
 import { resolveLanguageMatch, type OrgLanguageSettings } from "../lib/org-languages.js";
 import { toIsoOrNull } from "../utils.js";
 import crypto from "crypto";
-import XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 export type GlossaryRow = {
   id: number;
@@ -636,14 +636,34 @@ export function parseCsv(text: string): { headers: string[]; rows: string[][] } 
   return { headers, rows: rows.slice(1) };
 }
 
-export function parseXlsxToCsv(buffer: Buffer): string {
+function escapeCsvField(value: string): string {
+  if (!/[",\r\n]/.test(value)) return value;
+  return `"${value.replace(/"/g, "\"\"")}"`;
+}
+
+export async function parseXlsxToCsv(buffer: Buffer): Promise<string> {
   if (!buffer || buffer.length === 0) return "";
   try {
-    const workbook = XLSX.read(buffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) return "";
-    const sheet = workbook.Sheets[sheetName];
-    return XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
+    const workbook = new ExcelJS.Workbook();
+    const data = Buffer.from(buffer);
+    await workbook.xlsx.load(data as any);
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) return "";
+    const lines: string[] = [];
+    worksheet.eachRow({ includeEmpty: false }, (row) => {
+      const width = row.cellCount;
+      if (width === 0) return;
+      const values: string[] = [];
+      let hasValue = false;
+      for (let column = 1; column <= width; column += 1) {
+        const text = String(row.getCell(column).text ?? "");
+        if (text.trim().length > 0) hasValue = true;
+        values.push(escapeCsvField(text));
+      }
+      if (!hasValue) return;
+      lines.push(values.join(","));
+    });
+    return lines.join("\n");
   } catch (err: any) {
     throw new Error(err?.message || "Failed to parse XLSX file.");
   }

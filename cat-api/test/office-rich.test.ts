@@ -11,6 +11,52 @@ function zipFromXmlEntries(entries: Record<string, string>): Buffer {
   return zip.toBuffer();
 }
 
+function buildStyledDocxBuffer() {
+  return zipFromXmlEntries({
+    "word/document.xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:rPr><w:rFonts w:ascii="Calibri"/><w:sz w:val="24"/><w:b/></w:rPr>
+        <w:t>Hallo</w:t>
+      </w:r>
+      <w:r>
+        <w:rPr><w:rFonts w:ascii="Calibri"/><w:sz w:val="22"/><w:u w:val="single"/></w:rPr>
+        <w:t> Welt</w:t>
+      </w:r>
+      <w:r>
+        <w:rPr><w:rFonts w:ascii="Calibri"/><w:sz w:val="20"/><w:i/></w:rPr>
+        <w:t> jetzt</w:t>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>`
+  });
+}
+
+function assertStyledDocxTranslation(targetText: string) {
+  const sourceBuffer = buildStyledDocxBuffer();
+  const parsed = parseOfficeRichSegments({ buffer: sourceBuffer, fileType: "docx" });
+  const first = parsed.segments[0]!;
+  const rebuilt = rebuildOfficeFromRichSegments({
+    sourceBuffer,
+    fileType: "docx",
+    segments: [{ ...first, tgt: targetText }]
+  });
+
+  assert.equal(rebuilt.warnings.length, 0);
+
+  const reparsed = parseOfficeRichSegments({ buffer: rebuilt.buffer, fileType: "docx" });
+  const runs = reparsed.segments[0]?.srcRuns ?? [];
+  assert.equal(reparsed.segments[0]?.src, targetText);
+  assert.ok(runs.some((run) => run.style?.bold === true), "bold formatting should survive");
+  assert.ok(runs.some((run) => run.style?.underline === true), "underline formatting should survive");
+  assert.ok(runs.some((run) => run.style?.italic === true), "italic formatting should survive");
+  assert.ok(runs.some((run) => run.style?.fontFamily === "Calibri"), "font family should survive");
+  assert.ok(runs.some((run) => run.style?.fontSizePt === 12), "font size should survive");
+}
+
 test("DOCX rich runs survive parse and rebuild", () => {
   const sourceBuffer = zipFromXmlEntries({
     "word/document.xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -50,6 +96,14 @@ test("DOCX rich runs survive parse and rebuild", () => {
   assert.equal(reparsed.segments.length, 1);
   assert.equal(reparsed.segments[0]?.src, "Bonjour monde");
   assert.equal(reparsed.segments[0]?.srcRuns?.[0]?.style?.fontFamily, "Calibri");
+});
+
+test("DOCX French translation keeps inline formatting for LLM-style output", () => {
+  assertStyledDocxTranslation("Bonjour le monde");
+});
+
+test("DOCX Danish translation keeps inline formatting for LLM-style output", () => {
+  assertStyledDocxTranslation("Hej verden nu");
 });
 
 test("PPTX rich runs survive parse and rebuild", () => {

@@ -65,6 +65,47 @@ export function requestUserId(user?: JwtPayload): string | null {
   return str.length ? str : null;
 }
 
+function normalizeAccessKey(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+export function requestUserAccessKeys(user?: JwtPayload): string[] {
+  if (!user) return [];
+  const keys = new Set<string>();
+  const username = normalizeAccessKey(user.username);
+  if (username) keys.add(username);
+  const sub = normalizeAccessKey(user.sub);
+  if (sub) keys.add(sub);
+  return Array.from(keys.values());
+}
+
+export function requestUserMatchesIdentifier(user: JwtPayload | undefined, identifier: unknown): boolean {
+  const normalized = normalizeAccessKey(identifier);
+  if (!normalized) return false;
+  return requestUserAccessKeys(user).includes(normalized);
+}
+
+async function userHasProjectTaskAccess(projectId: number, user?: JwtPayload): Promise<boolean> {
+  const keys = requestUserAccessKeys(user);
+  if (keys.length === 0) return false;
+  try {
+    const res = await db.query(
+      `SELECT 1
+       FROM translation_tasks
+       WHERE project_id = $1
+         AND (
+           LOWER(COALESCE(translator_user, '')) = ANY($2::text[])
+           OR LOWER(COALESCE(reviewer_user, '')) = ANY($2::text[])
+         )
+       LIMIT 1`,
+      [projectId, keys]
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function requestUserIdInt(user?: JwtPayload): number | null {
   if (!user) return null;
   const raw = user.sub;
@@ -184,24 +225,20 @@ export async function ensureProjectAccess(
     return null;
   }
   if (isAdminUser(user)) return row;
-  const userId = requestUserId(user);
   const departmentId = await requestUserDepartmentId(user);
   if (!departmentId || Number(row.department_id) !== Number(departmentId)) {
     reply.code(403).send({ error: "Project access denied" });
     return null;
   }
-
-  if (isManagerUser(user)) {
+  const owner = row.assigned_user ?? row.created_by ?? null;
+  if (requestUserMatchesIdentifier(user, owner)) {
     return row;
   }
-
-  const owner = row.assigned_user ?? row.created_by ?? null;
-
-  if (!userId || owner !== userId) {
-    reply.code(403).send({ error: "Project access denied" });
-    return null;
+  if (await userHasProjectTaskAccess(projectId, user)) {
+    return row;
   }
-  return row;
+  reply.code(403).send({ error: "Project access denied" });
+  return null;
 }
 
 export function ensureProjectReady(row: { status?: string } | null, reply: FastifyReply) {

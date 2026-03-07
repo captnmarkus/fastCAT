@@ -21,7 +21,6 @@ import path from "path";
 import AdmZip from "adm-zip";
 import xpath from "xpath";
 import { DOMParser } from "@xmldom/xmldom";
-import XLSX from "xlsx";
 
 import {
   appendMissingLanguageErrors,

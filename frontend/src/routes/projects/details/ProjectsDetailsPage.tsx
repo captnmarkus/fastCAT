@@ -361,10 +361,10 @@ export default function ProjectsDetailsPage({ currentUser }: { currentUser: Auth
     if (normalized === "error") return "ERROR";
     return "DRAFT";
   }
-  function isTaskAssignedToUser(task: { assigneeId?: string }) {
+  function isTaskAssignedToUser(task: { assigneeId?: string; reviewerUserId?: string | null }) {
     const assignee = String(task?.assigneeId || "").trim().toLowerCase();
-    if (!assignee) return false;
-    return currentUserKeys.has(assignee);
+    const reviewer = String(task?.reviewerUserId || "").trim().toLowerCase();
+    return (assignee && currentUserKeys.has(assignee)) || (reviewer && currentUserKeys.has(reviewer));
   }
   function deriveRollupStatus(tasks: Array<{ status?: string }>, fallback: string) {
     if (tasks.length === 0) return fallback;

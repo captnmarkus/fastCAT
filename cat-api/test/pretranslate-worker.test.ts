@@ -307,3 +307,165 @@ test("pretranslate worker fails when segments are missing for a job", async () =
     }
   }
 });
+
+test("pretranslate worker preserves rich target runs for formatted DOCX-style segments", async () => {
+  await initDatabase();
+
+  let engineId: number | null = null;
+  let projectId: number | null = null;
+  let fileId: number | null = null;
+  let taskId: number | null = null;
+
+  try {
+    const engineRes = await db.query<{ id: number }>(
+      `INSERT INTO translation_engines(name, description, config, disabled, created_at, updated_at)
+       VALUES ($1, '', '{}'::jsonb, FALSE, NOW(), NOW())
+       RETURNING id`,
+      [`test-engine-rich-${Date.now()}`]
+    );
+    engineId = engineRes.rows[0]?.id ?? null;
+    assert.ok(engineId, "Engine created");
+
+    await db.query("BEGIN");
+    try {
+      const projectRes = await db.query<{ id: number }>(
+        `INSERT INTO projects(name, src_lang, tgt_lang, target_langs, status, created_by, created_at, department_id)
+         VALUES ($1, 'de-DE', 'fr-FR', $2::jsonb, 'draft', 'tester', NOW(), 1)
+         RETURNING id`,
+        ["pretranslate-worker-rich", JSON.stringify(["fr-FR"])]
+      );
+      projectId = projectRes.rows[0]?.id ?? null;
+      assert.ok(projectId, "Project created");
+
+      const fileRes = await db.query<{ id: number }>(
+        `INSERT INTO project_files(project_id, original_name, stored_path, created_at)
+         VALUES ($1, 'rich.docx', 'pending', NOW())
+         RETURNING id`,
+        [projectId]
+      );
+      fileId = fileRes.rows[0]?.id ?? null;
+      assert.ok(fileId, "File created");
+
+      await db.query(`UPDATE projects SET status = 'ready' WHERE id = $1`, [projectId]);
+      await db.query("COMMIT");
+    } catch (err) {
+      await db.query("ROLLBACK");
+      throw err;
+    }
+
+    const taskRes = await db.query<{ id: number }>(
+      `INSERT INTO translation_tasks(project_id, file_id, source_lang, target_lang, translator_user, status)
+       VALUES ($1, $2, 'de-DE', 'fr-FR', 'tester', 'draft')
+       RETURNING id`,
+      [projectId, fileId]
+    );
+    taskId = taskRes.rows[0]?.id ?? null;
+    assert.ok(taskId, "Task created");
+
+    await db.query(
+      `INSERT INTO segments(
+         project_id,
+         file_id,
+         task_id,
+         seg_index,
+         src,
+         tgt,
+         src_runs,
+         status,
+         state,
+         created_at,
+         updated_at
+       )
+       VALUES (
+         $1,
+         $2,
+         $3,
+         0,
+         'Hallo Welt',
+         NULL,
+         $4::jsonb,
+         'draft',
+         'draft',
+         NOW(),
+         NOW()
+       )`,
+      [
+        projectId,
+        fileId,
+        taskId,
+        JSON.stringify([
+          { text: "Hallo", style: { bold: true, fontFamily: "Calibri", fontSizePt: 12 } },
+          { text: " Welt", style: { italic: true, underline: true, fontFamily: "Calibri", fontSizePt: 11 } }
+        ])
+      ]
+    );
+
+    await db.query(
+      "UPDATE projects SET project_settings = $2 WHERE id = $1",
+      [
+        projectId,
+        {
+          translation_engine_default_id: engineId,
+          mt_seeding_enabled: true
+        }
+      ]
+    );
+
+    await enqueuePretranslateJobs({ projectId, scope: "all" });
+
+    const jobRes = await db.query<{
+      id: number;
+      project_id: number;
+      file_id: number;
+      target_lang: string;
+      engine_id: number | null;
+      status: string;
+      overwrite_existing: boolean;
+      retry_count: number;
+      max_retries: number;
+    }>(
+      `SELECT id, project_id, file_id, target_lang, engine_id, status, overwrite_existing, retry_count, max_retries
+       FROM project_pretranslate_jobs
+       WHERE project_id = $1
+       LIMIT 1`,
+      [projectId]
+    );
+    const job = jobRes.rows[0];
+    assert.ok(job, "Job created");
+
+    const mockRequest = async () => ({
+      payload: { choices: [{ message: { content: "Bonjour monde" } }] },
+      status: 200,
+      engineId
+    });
+
+    await processPretranslateJobForTest(job, { requestSegment: mockRequest });
+
+    const segmentRes = await db.query<{ tgt: string | null; tgt_runs: any }>(
+      `SELECT tgt, tgt_runs
+       FROM segments
+       WHERE task_id = $1
+       LIMIT 1`,
+      [taskId]
+    );
+    const row = segmentRes.rows[0];
+    assert.equal(row?.tgt, "Bonjour monde");
+    assert.ok(Array.isArray(row?.tgt_runs), "tgt_runs should be persisted");
+    assert.ok(row.tgt_runs.length >= 2, "projected target runs should keep multiple run slots");
+    assert.equal(row.tgt_runs[0]?.style?.bold, true);
+    assert.equal(row.tgt_runs[0]?.style?.fontFamily, "Calibri");
+    assert.ok(row.tgt_runs.some((run: any) => run?.style?.italic === true), "italic run should be preserved");
+    assert.ok(row.tgt_runs.some((run: any) => run?.style?.underline === true), "underline run should be preserved");
+  } finally {
+    if (projectId != null) {
+      await db.query("DELETE FROM project_pretranslate_jobs WHERE project_id = $1", [projectId]);
+      await db.query("DELETE FROM segments WHERE project_id = $1", [projectId]);
+      await db.query("DELETE FROM translation_tasks WHERE project_id = $1", [projectId]);
+      await db.query("DELETE FROM project_files WHERE project_id = $1", [projectId]);
+      await db.query("DELETE FROM projects WHERE id = $1", [projectId]);
+    }
+    if (engineId != null) {
+      await db.query("DELETE FROM translation_engines WHERE id = $1", [engineId]);
+    }
+  }
+});

@@ -3,6 +3,7 @@ import {
   normalizeGatewayMessageContent,
   resolveEnabledGatewayProvider
 } from "./llm-gateway.js";
+import { formatLanguageNameForPrompt } from "./translation-prompt.js";
 
 export class TranslationServiceError extends Error {
   constructor(message: string) {
@@ -25,6 +26,8 @@ export async function translateSnippetWithService(params: {
   const targetLang = String(params.targetLang || "").trim();
   const sourceLang = params.sourceLang ? String(params.sourceLang).trim() : "";
   const tone = params.tone ? String(params.tone).trim() : "";
+  const sourceLanguageName = sourceLang ? formatLanguageNameForPrompt(sourceLang) || sourceLang : "";
+  const targetLanguageName = formatLanguageNameForPrompt(targetLang) || targetLang;
 
   if (!text) {
     throw new TranslationServiceError("Translation text is required.");
@@ -41,10 +44,10 @@ export async function translateSnippetWithService(params: {
   }
 
   const stylePrompt = tone ? `Keep tone: ${tone}.` : "Keep the original tone.";
-  const sourceHint = sourceLang ? `Source language: ${sourceLang}.` : "Detect the source language.";
+  const sourceHint = sourceLang ? `Source language: ${sourceLanguageName}.` : "Detect the source language.";
   const userPrompt = [
     sourceHint,
-    `Target language: ${targetLang}.`,
+    `Target language: ${targetLanguageName}.`,
     stylePrompt,
     "Return only the translated text.",
     `Text: """${text}"""`

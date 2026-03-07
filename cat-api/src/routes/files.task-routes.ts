@@ -72,6 +72,7 @@ export function registerTaskFileRoutes(app: FastifyInstance) {
       file_type_config: any;
       target_lang: string;
       translator_user: string;
+      reviewer_user: string | null;
       tmx_id: number | null;
       task_status: string | null;
       original_name: string;
@@ -91,11 +92,12 @@ export function registerTaskFileRoutes(app: FastifyInstance) {
               t.file_id,
               f.file_type,
               f.file_type_config_id,
-              ft.config AS file_type_config,
-              t.target_lang,
-              t.translator_user,
-              t.tmx_id,
-              t.status AS task_status,
+      ft.config AS file_type_config,
+      t.target_lang,
+      t.translator_user,
+      t.reviewer_user,
+      t.tmx_id,
+      t.status AS task_status,
               f.original_name,
               f.created_at AS file_created_at,
               p.name AS project_name,
@@ -141,6 +143,7 @@ export function registerTaskFileRoutes(app: FastifyInstance) {
         id: Number(row.task_id),
         targetLang: String(row.target_lang || ""),
         assigneeId: String(row.translator_user || ""),
+        reviewerUserId: String(row.reviewer_user || "").trim() || null,
         status: String(row.task_status || "draft"),
         tmxId: row.tmx_id != null ? Number(row.tmx_id) : null
       },

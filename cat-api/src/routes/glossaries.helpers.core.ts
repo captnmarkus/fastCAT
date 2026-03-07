@@ -26,7 +26,6 @@ import path from "path";
 import AdmZip from "adm-zip";
 import xpath from "xpath";
 import { DOMParser } from "@xmldom/xmldom";
-import XLSX from "xlsx";
 
 export { LANGUAGE_NAME_MAP } from "../lib/language-normalization.js";
 
