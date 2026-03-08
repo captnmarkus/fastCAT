@@ -35,6 +35,12 @@ type ProjectPanelItem = {
 
 type UploadFileType = "html" | "xml" | "pdf" | "docx" | "pptx" | "xlsx" | "other";
 
+type UploadedChatFile = {
+  fileId: number;
+  filename: string;
+  fileType: Exclude<UploadFileType, "other">;
+};
+
 const FILE_TYPE_EXTENSIONS: Record<Exclude<UploadFileType, "other">, string[]> = {
   html: [".html", ".htm", ".xhtml", ".xtml"],
   xml: [".xml", ".xlf", ".xliff"],
@@ -122,6 +128,26 @@ function normalizeProjectPanelItems(projects: Project[], inboxItems: InboxItem[]
     .slice(0, 10);
 }
 
+function mergeUploadedFiles(
+  current: UploadedChatFile[],
+  incoming: UploadedChatFile[]
+): UploadedChatFile[] {
+  const merged = new Map<number, UploadedChatFile>();
+  current.forEach((entry) => merged.set(entry.fileId, entry));
+  incoming.forEach((entry) => merged.set(entry.fileId, entry));
+  return Array.from(merged.values());
+}
+
+function isWizardWaitingForFiles(messages: UiMessage[]): boolean {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const entry = messages[index];
+    if (!entry || entry.role !== "assistant") continue;
+    const wizard = (entry.contentJson as any)?.wizard;
+    return Boolean(wizard?.active) && String(wizard?.step || "").trim().toLowerCase() === "files";
+  }
+  return false;
+}
+
 export default function ChatPanel() {
   const navigate = useNavigate();
   const [threads, setThreads] = useState<AgentChatThread[]>([]);
@@ -146,6 +172,7 @@ export default function ChatPanel() {
   const [chatUploadConfigsLoaded, setChatUploadConfigsLoaded] = useState(false);
   const [chatUploadConfigs, setChatUploadConfigs] = useState<FileTypeConfig[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [pendingUploadedFiles, setPendingUploadedFiles] = useState<UploadedChatFile[]>([]);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
@@ -307,13 +334,31 @@ export default function ChatPanel() {
   }, [threadMenuOpenFor]);
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, opts?: { contentJson?: Record<string, any> | null; clearPendingUploads?: boolean }) => {
       const trimmed = String(text || "").trim();
       if (!trimmed || submitting) return;
 
       setSubmitting(true);
       setError(null);
       setStreamStatus(null);
+
+      const uploadContext =
+        pendingUploadedFiles.length > 0
+          ? {
+              uploadedFiles: pendingUploadedFiles.map((entry) => ({
+                fileId: entry.fileId,
+                filename: entry.filename,
+                fileType: entry.fileType
+              }))
+            }
+          : null;
+      const mergedContentJson =
+        opts?.contentJson || uploadContext
+          ? {
+              ...(opts?.contentJson || {}),
+              ...(uploadContext || {})
+            }
+          : null;
 
       const threadId = activeThreadId ?? (await loadThreads())?.id;
       if (!threadId) {
@@ -327,7 +372,7 @@ export default function ChatPanel() {
         userId: 0,
         role: "user",
         contentText: trimmed,
-        contentJson: null,
+        contentJson: mergedContentJson,
         createdAt: new Date().toISOString()
       };
       setMessages((prev) => [...prev, optimisticUserMessage]);
@@ -339,8 +384,14 @@ export default function ChatPanel() {
       );
 
       try {
-        const start = await postChatMessage(threadId, { contentText: trimmed });
+        const start = await postChatMessage(threadId, {
+          contentText: trimmed,
+          contentJson: mergedContentJson
+        });
         setMessages((prev) => prev.map((entry) => (entry.id === optimisticUserMessage.id ? start.userMessage : entry)));
+        if ((opts?.clearPendingUploads ?? true) && pendingUploadedFiles.length > 0) {
+          setPendingUploadedFiles([]);
+        }
 
         const draftAssistantId = `draft-assistant-${start.requestId}`;
         setMessages((prev) => [
@@ -376,12 +427,12 @@ export default function ChatPanel() {
               return;
             }
             if (event.type === "tool_call") {
-              if (event.status === "started") setStreamStatus(`Running ${event.toolName}...`);
+              if (event.status === "started") setStreamStatus(event.message || `Running ${event.toolName}...`);
               if (event.status === "succeeded") {
-                setStreamStatus(`${event.toolName} completed.`);
+                setStreamStatus(event.message || `${event.toolName} completed.`);
                 void loadCurrentProjects();
               }
-              if (event.status === "failed") setStreamStatus(`${event.toolName} failed.`);
+              if (event.status === "failed") setStreamStatus(event.message || `${event.toolName} failed.`);
               return;
             }
             if (event.type === "final") {
@@ -410,7 +461,7 @@ export default function ChatPanel() {
         setSubmitting(false);
       }
     },
-    [activeThreadId, loadCurrentProjects, loadThreads, submitting]
+    [activeThreadId, loadCurrentProjects, loadThreads, pendingUploadedFiles, submitting]
   );
 
   const handleUploadFiles = useCallback(
@@ -438,7 +489,7 @@ export default function ChatPanel() {
           setChatUploadProjectId(projectId);
         }
 
-        const uploaded: Array<{ fileId: number; filename: string; fileType: Exclude<UploadFileType, "other"> }> = [];
+        const uploaded: UploadedChatFile[] = [];
         const rejected: string[] = [];
         const failed: string[] = [];
 
@@ -467,10 +518,7 @@ export default function ChatPanel() {
         }
 
         if (uploaded.length > 0) {
-          const fileIds = uploaded.map((entry) => entry.fileId);
-          const fileSummary = uploaded.map((entry) => `${entry.filename} (#${entry.fileId})`).join(", ");
-          const guidance = `Uploaded file IDs: ${fileIds.join(", ")} (${fileSummary}). Please create a project using the project wizard and guide me step by step.`;
-          setDraft((prev) => (prev.trim() ? `${prev.trim()}\n\n${guidance}` : guidance));
+          setPendingUploadedFiles((prev) => mergeUploadedFiles(prev, uploaded));
         }
 
         const statusParts: string[] = [];
@@ -487,6 +535,19 @@ export default function ChatPanel() {
         } else if (failed.length > 0) {
           setError(failed.join(" | "));
         }
+
+        if (uploaded.length > 0 && isWizardWaitingForFiles(messages) && !draft.trim()) {
+          void sendMessage("I uploaded the requested file(s).", {
+            contentJson: {
+              uploadedFiles: uploaded.map((entry) => ({
+                fileId: entry.fileId,
+                filename: entry.filename,
+                fileType: entry.fileType
+              }))
+            },
+            clearPendingUploads: true
+          });
+        }
       } catch (err: any) {
         setError(err?.userMessage || err?.message || "Failed to upload files.");
         setStreamStatus(null);
@@ -494,7 +555,7 @@ export default function ChatPanel() {
         setUploadingFiles(false);
       }
     },
-    [chatUploadConfigByType, chatUploadProjectId]
+    [chatUploadConfigByType, chatUploadProjectId, draft, messages, sendMessage]
   );
 
   const handleOpenFilePicker = useCallback(() => {
@@ -756,14 +817,24 @@ export default function ChatPanel() {
                 <div className="text-muted small">Loading messages...</div>
               ) : messages.length === 0 ? (
                 <div className="text-muted small">
-                  Ask for a translation snippet or ask me to create a project with file IDs.
+                  Ask for a translation snippet or upload a file and I will guide you through project creation one step at a time.
                 </div>
               ) : (
                 messages.map((message) => {
                   const actions = getQuickActions(message);
+                  const isDraftAssistant =
+                    message.role === "assistant" &&
+                    typeof message.id === "string" &&
+                    message.id.startsWith("draft-assistant-");
                   return (
-                    <article key={String(message.id)} className={`fc-chat-message is-${message.role}`}>
-                      <div className="fc-chat-message-text">{message.contentText || ""}</div>
+                    <article
+                      key={String(message.id)}
+                      className={`fc-chat-message is-${message.role}${isDraftAssistant ? " is-draft" : ""}`}
+                    >
+                      <div className="fc-chat-message-text">
+                        {message.contentText || (isDraftAssistant ? "Thinking..." : "")}
+                        {isDraftAssistant ? <span className="fc-chat-message-cursor" aria-hidden="true" /> : null}
+                      </div>
                       {actions.length > 0 ? (
                         <div className="fc-chat-quick-actions">
                           {actions.map((action) => (
@@ -789,6 +860,18 @@ export default function ChatPanel() {
 
             <form className="fc-chat-composer" onSubmit={handleSubmit}>
               <div className={`fc-chat-compose-shell${submitting || uploadingFiles ? " is-busy" : ""}`}>
+                {pendingUploadedFiles.length > 0 ? (
+                  <div className="fc-chat-upload-pillbar">
+                    <div className="fc-chat-upload-pillbar-label">Ready for the next message</div>
+                    <div className="fc-chat-upload-pillbar-items">
+                      {pendingUploadedFiles.map((file) => (
+                        <span key={file.fileId} className="fc-chat-upload-pill">
+                          {file.filename}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <textarea
                   className="form-control fc-chat-compose-input"
                   value={draft}

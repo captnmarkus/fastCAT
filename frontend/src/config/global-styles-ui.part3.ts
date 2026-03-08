@@ -566,6 +566,30 @@ export const GLOBAL_STYLES_UI_PART_3 = String.raw`
     overflow-wrap: anywhere;
   }
 
+  .fc-chat-message.is-draft .fc-chat-message-text {
+    color: #1e293b;
+  }
+
+  .fc-chat-message-cursor {
+    display: inline-block;
+    width: 0.58rem;
+    height: 1.05em;
+    margin-left: 0.16rem;
+    vertical-align: -0.12em;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.7);
+    animation: fc-chat-caret-pulse 0.9s ease-in-out infinite;
+  }
+
+  @keyframes fc-chat-caret-pulse {
+    0%, 49% {
+      opacity: 0.15;
+    }
+    50%, 100% {
+      opacity: 0.95;
+    }
+  }
+
   .fc-chat-quick-actions {
     display: flex;
     flex-wrap: wrap;
@@ -595,6 +619,37 @@ export const GLOBAL_STYLES_UI_PART_3 = String.raw`
     display: grid;
     gap: 0.15rem;
     transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  .fc-chat-upload-pillbar {
+    display: grid;
+    gap: 0.42rem;
+    padding: 0.72rem 0.82rem 0.18rem;
+  }
+
+  .fc-chat-upload-pillbar-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #475569;
+  }
+
+  .fc-chat-upload-pillbar-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.36rem;
+  }
+
+  .fc-chat-upload-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    background: rgba(14, 165, 233, 0.11);
+    color: #0f172a;
+    padding: 0.26rem 0.62rem;
+    font-size: 0.76rem;
+    font-weight: 600;
   }
 
   .fc-chat-compose-shell:focus-within {

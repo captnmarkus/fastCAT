@@ -4,6 +4,7 @@ import { CONFIG } from "../config.js";
 import {
   APP_AGENT_TOOL_ALLOWLIST,
   type AppAgentConfigUpdateInput,
+  evaluateAppAgentAvailability,
   loadAppAgentConfig,
   normalizeUpdatedAppAgentConfig,
   updateAppAgentConfig
@@ -13,6 +14,7 @@ import type { AgentService } from "../lib/agent-service.js";
 import {
   getRequestUser,
   requireAdmin,
+  requireAuth,
   requestUserId
 } from "../middleware/auth.js";
 import {
@@ -24,6 +26,7 @@ import {
 import { copyObject, getObjectBuffer, getS3Bucket } from "../lib/s3.js";
 import { keyProjectSourceOriginal } from "../lib/storage-keys.js";
 import { insertFileArtifact } from "../lib/file-artifacts.js";
+import { enqueueProvisionJobIfImportReady } from "../lib/provision-queue.js";
 import { insertSegmentsForFile } from "./projects.segment-insert.js";
 import { parseXliffSegments } from "../lib/xliff.js";
 import { segmentHtmlWithTemplate } from "../lib/html-segmentation.js";
@@ -177,6 +180,17 @@ function normalizeJsonObject(input: unknown): Record<string, any> {
   return {};
 }
 
+function normalizeProjectAccessRole(role: unknown): string {
+  const normalized = String(role || "").trim().toLowerCase();
+  return normalized === "user" ? "reviewer" : normalized;
+}
+
+function isEligibleProjectAssigneeRole(role: unknown, opts?: { allowAdminSelf?: boolean }): boolean {
+  const normalized = normalizeProjectAccessRole(role);
+  if (normalized === "reviewer" || normalized === "manager") return true;
+  return Boolean(opts?.allowAdminSelf) && normalized === "admin";
+}
+
 const FILE_TYPE_EXTENSIONS: Record<string, string[]> = {
   html: [".html", ".htm", ".xhtml", ".xtml"],
   xml: [".xml", ".xlf", ".xliff"],
@@ -187,7 +201,7 @@ const FILE_TYPE_EXTENSIONS: Record<string, string[]> = {
 };
 
 function canAssignProjectsByRole(role: string | null | undefined) {
-  const normalized = String(role || "").trim().toLowerCase();
+  const normalized = normalizeProjectAccessRole(role);
   return normalized === "admin" || normalized === "manager";
 }
 
@@ -216,7 +230,7 @@ async function resolveUserRef(userRef: unknown): Promise<ResolvedUserRef | null>
     return {
       userId: Number(row.id),
       username: String(row.username || "").trim(),
-      role: String(row.role || "").trim().toLowerCase(),
+      role: normalizeProjectAccessRole(row.role),
       departmentId:
         row.department_id != null && Number.isFinite(Number(row.department_id)) && Number(row.department_id) > 0
           ? Math.trunc(Number(row.department_id))
@@ -244,7 +258,7 @@ async function resolveUserRef(userRef: unknown): Promise<ResolvedUserRef | null>
   return {
     userId: Number(row.id),
     username: String(row.username || "").trim(),
-    role: String(row.role || "").trim().toLowerCase(),
+    role: normalizeProjectAccessRole(row.role),
     departmentId:
       row.department_id != null && Number.isFinite(Number(row.department_id)) && Number(row.department_id) > 0
         ? Math.trunc(Number(row.department_id))
@@ -284,16 +298,22 @@ async function listAssignableUsersForContext(userContext: InternalUserContext): 
     department_id: number | null;
   }>(queryText, queryParams);
 
-  return res.rows.map((row) => {
-    const departmentIdRaw = Number(row.department_id ?? 0);
-    return {
-      userId: Number(row.id),
-      username: String(row.username || "").trim(),
-      role: String(row.role || "").trim().toLowerCase(),
-      departmentId:
-        Number.isFinite(departmentIdRaw) && departmentIdRaw > 0 ? Math.trunc(departmentIdRaw) : null
-    };
-  });
+  return res.rows
+    .map((row) => {
+      const departmentIdRaw = Number(row.department_id ?? 0);
+      return {
+        userId: Number(row.id),
+        username: String(row.username || "").trim(),
+        role: normalizeProjectAccessRole(row.role),
+        departmentId:
+          Number.isFinite(departmentIdRaw) && departmentIdRaw > 0 ? Math.trunc(departmentIdRaw) : null
+      };
+    })
+    .filter((row) => {
+      if (!canAssign) return row.userId === userContext.userId;
+      const allowAdminSelf = row.userId === userContext.userId && row.role === "admin";
+      return isEligibleProjectAssigneeRole(row.role, { allowAdminSelf });
+    });
 }
 
 function parseDueAtIso(value: unknown): string | null {
@@ -367,7 +387,7 @@ async function resolveVerifiedToolUser(userContext: InternalUserContext): Promis
   return {
     userId: Math.trunc(Number(row.id)),
     username: dbUsername,
-    role: String(row.role || "").trim().toLowerCase(),
+    role: normalizeProjectAccessRole(row.role),
     departmentId
   };
 }
@@ -437,6 +457,111 @@ function buildDefaultProjectName(filename: string) {
   const date = new Date().toISOString().slice(0, 10);
   const base = path.parse(String(filename || "").trim()).name || "Project";
   return `${base} ${date}`;
+}
+
+async function provisionAgentProjectShell(params: {
+  app: any;
+  traceId?: string;
+  userContext: InternalUserContext;
+  name: string;
+  departmentId: number;
+  sourceLanguage: string;
+  targetLanguages: string[];
+  dueAtIso: string | null;
+  projectOwnerUsername: string;
+  translationEngineId: number | null;
+  rulesetId: number | null;
+  tmxId: number | null;
+  termbaseId: number | null;
+  assignedUsername: string;
+  files: Array<{ sourceFileId: number; tempKey: string; filename: string; fileTypeConfigId: number | null }>;
+}) {
+  const token = params.app.jwt.sign({
+    sub: params.userContext.userId,
+    username: params.userContext.username,
+    role: normalizeProjectAccessRole(params.userContext.role),
+    departmentId: params.userContext.departmentId ?? null
+  });
+  const response = await params.app.inject({
+    method: "POST",
+    url: "/api/cat/projects/provision",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      ...(params.traceId ? { "x-request-id": params.traceId } : {})
+    },
+    payload: {
+      name: params.name,
+      departmentId: params.departmentId,
+      srcLang: params.sourceLanguage,
+      tgtLang: params.targetLanguages[0] ?? null,
+      projectTargetLangs: params.targetLanguages,
+      projectOwnerId: params.projectOwnerUsername,
+      dueAt: params.dueAtIso ?? undefined,
+      files: params.files.map((file) => ({
+        tempKey: file.tempKey,
+        filename: file.filename,
+        fileTypeConfigId: file.fileTypeConfigId
+      })),
+      translationPlan: params.files.map((file) => ({
+        tempKey: file.tempKey,
+        targetLangs: params.targetLanguages,
+        assignments: Object.fromEntries(
+          params.targetLanguages.map((targetLanguage) => [
+            targetLanguage,
+            {
+              translatorUserId: params.assignedUsername,
+              tmxId: params.tmxId ?? null,
+              seedSource: params.tmxId != null ? "tmx" : params.translationEngineId != null ? "nmt" : "none",
+              engineId: params.translationEngineId ?? null,
+              rulesetId: params.rulesetId ?? null,
+              glossaryId: params.termbaseId ?? null
+            }
+          ])
+        )
+      })),
+      translationEngineId: params.translationEngineId ?? null,
+      mtSeedingEnabled: params.translationEngineId != null,
+      rulesEnabled: params.rulesetId != null,
+      rulesetId: params.rulesetId ?? null,
+      termbaseEnabled: params.termbaseId != null,
+      glossaryEnabled: params.termbaseId != null,
+      glossaryId: params.termbaseId ?? null
+    }
+  });
+
+  let payload: any = null;
+  try {
+    payload = response.json();
+  } catch {
+    payload = null;
+  }
+  if (response.statusCode >= 400) {
+    const error: any = new Error(String(payload?.error || "Failed to provision project shell."));
+    error.statusCode = response.statusCode;
+    throw error;
+  }
+
+  const projectId = Number(payload?.projectId ?? 0);
+  if (!Number.isFinite(projectId) || projectId <= 0) {
+    throw new Error("Provision route did not return a valid project ID.");
+  }
+
+  const fileIdByTempKey = new Map<string, number>();
+  const files = Array.isArray(payload?.files) ? payload.files : [];
+  files.forEach((row: any) => {
+    const tempKey = String(row?.tempKey || "").trim();
+    const fileId = Number(row?.fileId ?? 0);
+    if (!tempKey || !Number.isFinite(fileId) || fileId <= 0) return;
+    fileIdByTempKey.set(tempKey, Math.trunc(fileId));
+  });
+
+  return {
+    projectId,
+    status: String(payload?.status || "provisioning"),
+    statusUrl: payload?.statusUrl ? String(payload.statusUrl) : null,
+    fileIdByTempKey
+  };
 }
 
 async function loadSourceArtifact(
@@ -627,6 +752,7 @@ async function parseSegmentsFromSourceArtifact(params: {
 export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (app, opts) => {
   app.get("/admin/app-agent/config", { preHandler: [requireAdmin] }, async () => {
     const config = await opts.agentService.getConfig();
+    const availability = await evaluateAppAgentAvailability(config);
     const providerRes = await db.query<{
       id: number;
       name: string;
@@ -643,6 +769,7 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
         ...config,
         applyMode: "hot_reload"
       },
+      availability,
       providers: providerRes.rows.map((row) => ({
         id: Number(row.id),
         name: String(row.name || ""),
@@ -670,16 +797,6 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
       }
     }
 
-    if (next.connectionProvider === "gateway" && !next.mockMode) {
-      const hasProvider = next.providerId != null && Number.isFinite(next.providerId) && next.providerId > 0;
-      const hasEndpoint = Boolean(next.endpoint);
-      if (!hasProvider && !hasEndpoint) {
-        return reply.code(400).send({
-          error: "Gateway mode requires either a providerId or endpoint."
-        });
-      }
-    }
-
     if (next.providerId != null) {
       const providerRes = await db.query<{ id: number; enabled: boolean }>(
         `SELECT id, enabled
@@ -700,12 +817,25 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
     const actor = requestUserId(getRequestUser(req)) || "admin";
     const updated = await updateAppAgentConfig(body, actor);
     await opts.agentService.reloadConfig(updated);
+    const availability = await evaluateAppAgentAvailability(updated);
 
     return {
       config: {
         ...updated,
         applyMode: "hot_reload"
-      }
+      },
+      availability
+    };
+  });
+
+  app.get("/app-agent/status", { preHandler: [requireAuth] }, async () => {
+    const config = await opts.agentService.getConfig();
+    const availability = await evaluateAppAgentAvailability(config);
+    return {
+      enabled: config.enabled,
+      connectionProvider: config.connectionProvider,
+      mockMode: config.mockMode,
+      availability
     };
   });
 
@@ -745,21 +875,30 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
     if (ownerRef != null && String(ownerRef).trim()) {
       const resolvedOwner = await resolveUserRef(ownerRef);
       if (!resolvedOwner) {
-        return reply.code(400).send({ error: "Assigned owner user was not found." });
+        return reply.code(400).send({ error: "Assigned user was not found." });
       }
       if (resolvedOwner.disabled) {
-        return reply.code(400).send({ error: "Assigned owner user is disabled." });
+        return reply.code(400).send({ error: "Assigned user is disabled." });
       }
       const isSelf =
         String(resolvedOwner.username).trim().toLowerCase() ===
         String(userContext.username).trim().toLowerCase();
+      const allowAdminSelf =
+        isSelf &&
+        normalizeProjectAccessRole(resolvedOwner.role) === "admin" &&
+        normalizeProjectAccessRole(userContext.role) === "admin";
+      if (!isEligibleProjectAssigneeRole(resolvedOwner.role, { allowAdminSelf })) {
+        return reply.code(400).send({
+          error: "Assigned user must be an eligible reviewer or manager. Admin assignment is only allowed to yourself."
+        });
+      }
       if (!requesterCanAssign && !isSelf) {
         return reply.code(403).send({
           error:
             "Only managers/admins can assign projects to other users. I'll create it for you, or ask a manager/admin to create/assign it."
         });
       }
-      if (requesterCanAssign && userContext.role === "manager" && !isSelf) {
+      if (requesterCanAssign && normalizeProjectAccessRole(userContext.role) === "manager" && !isSelf) {
         if (
           userContext.departmentId == null ||
           resolvedOwner.departmentId == null ||
@@ -836,17 +975,8 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
     const requestedEngineId = parsePositiveInt(
       args.translation_engine_id ?? args.translationEngineId
     );
-    const defaultEngineIdRaw = Number(engineRes.rows[0]?.id ?? 0);
-    const defaultEngineId =
-      Number.isFinite(defaultEngineIdRaw) && defaultEngineIdRaw > 0 ? Math.trunc(defaultEngineIdRaw) : null;
-    const selectedEngineId = requestedEngineId ?? defaultEngineId;
-    if (!selectedEngineId) {
-      return reply.code(400).send({
-        error:
-          "No translation engine is configured/enabled for your account/project scope. A manager/admin can enable it for you."
-      });
-    }
-    if (!engineIds.has(selectedEngineId)) {
+    const selectedEngineId = requestedEngineId;
+    if (selectedEngineId != null && !engineIds.has(selectedEngineId)) {
       return reply.code(400).send({ error: "Selected translation engine is not available." });
     }
 
@@ -876,10 +1006,16 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
     }
 
     const termbaseRes = await db.query<{ id: number; label: string }>(
-      `SELECT id, label
-       FROM glossaries
-       WHERE disabled = FALSE
-       ORDER BY updated_at DESC, id DESC`
+      normalizeProjectAccessRole(userContext.role) === "admin"
+        ? `SELECT id, label
+           FROM glossaries
+           WHERE disabled = FALSE
+           ORDER BY updated_at DESC, id DESC`
+        : `SELECT id, label
+           FROM glossaries
+           WHERE disabled = FALSE
+             AND COALESCE(LOWER(visibility), 'managers') NOT IN ('admins', 'private')
+           ORDER BY updated_at DESC, id DESC`
     );
     const termbaseIds = new Set<number>(termbaseRes.rows.map((row) => Number(row.id)));
     const selectedTermbaseId = parsePositiveInt(
@@ -928,6 +1064,16 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
       return reply.code(403).send({ error: "Department assignment is required to create projects." });
     }
 
+    const assignedIsAdminSelf =
+      assignedUser.userId === userContext.userId &&
+      normalizeProjectAccessRole(assignedUser.role) === "admin" &&
+      normalizeProjectAccessRole(userContext.role) === "admin";
+    if (!assignedIsAdminSelf) {
+      if (assignedUser.departmentId == null || Number(assignedUser.departmentId) !== Number(departmentId)) {
+        return reply.code(403).send({ error: "Assigned user must belong to the project department." });
+      }
+    }
+
     for (const fileId of fileIds) {
       const row = sourceById.get(fileId);
       if (!row) continue;
@@ -942,6 +1088,333 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
 
     const firstSourceFile = sourceById.get(fileIds[0]!)!;
     const projectName = String(args.name || "").trim() || buildDefaultProjectName(firstSourceFile.original_name);
+
+    const provisionFiles = fileIds.map((sourceFileId, index) => {
+      const source = sourceById.get(sourceFileId)!;
+      return {
+        sourceFileId,
+        tempKey: `agent-source-${sourceFileId}-${index + 1}`,
+        filename: String(source.original_name || "").trim() || `file-${sourceFileId}`,
+        fileTypeConfigId: source.file_type_config_id ?? null
+      };
+    });
+
+    let provisionedShell: Awaited<ReturnType<typeof provisionAgentProjectShell>>;
+    try {
+      provisionedShell = await provisionAgentProjectShell({
+        app,
+        traceId: typeof req.id === "string" ? req.id : undefined,
+        userContext,
+        name: projectName,
+        departmentId,
+        sourceLanguage,
+        targetLanguages,
+        dueAtIso: dueAtIso && dueAtIso !== "__invalid__" ? dueAtIso : null,
+        projectOwnerUsername: userContext.username,
+        translationEngineId: selectedEngineId ?? null,
+        rulesetId: selectedRulesetId ?? null,
+        tmxId: selectedTmxId ?? null,
+        termbaseId: selectedTermbaseId ?? null,
+        assignedUsername: assignedUser.username,
+        files: provisionFiles
+      });
+    } catch (err: any) {
+      const statusCode = Number(err?.statusCode ?? 500);
+      return reply.code(statusCode >= 400 && statusCode < 600 ? statusCode : 500).send({
+        error: String(err?.message || "Failed to provision project shell.")
+      });
+    }
+
+    const provisionedProject = await withTransaction(async (client) => {
+      const createdFileIds: number[] = [];
+      const fileStatuses: Array<{
+        sourceFileId: number;
+        fileId: number;
+        filename: string;
+        status: FileProcessingStatus;
+        segmentCount: number;
+        error: string | null;
+      }> = [];
+      const sourceFileMap: Record<string, number> = {};
+
+      for (const filePlan of provisionFiles) {
+        const source = sourceById.get(filePlan.sourceFileId);
+        const newFileId = Number(provisionedShell.fileIdByTempKey.get(filePlan.tempKey) ?? 0);
+        if (!source || !Number.isFinite(newFileId) || newFileId <= 0) {
+          throw new Error(`Provisioned file is missing for source file ${filePlan.sourceFileId}.`);
+        }
+        createdFileIds.push(newFileId);
+        sourceFileMap[String(newFileId)] = filePlan.sourceFileId;
+        await insertFileProcessingLog(client, {
+          projectId: provisionedShell.projectId,
+          fileId: newFileId,
+          stage: "IMPORT",
+          status: "QUEUED",
+          message: "Queued for agent import.",
+          details: { sourceFileId: filePlan.sourceFileId }
+        });
+
+        try {
+          const sourceArtifact = await loadSourceArtifact(client, filePlan.sourceFileId);
+          const sourceObjectKey = String(sourceArtifact?.object_key || "").trim();
+          if (!sourceArtifact || !sourceObjectKey) {
+            throw new Error(`Source artifact is missing for file_id ${filePlan.sourceFileId}.`);
+          }
+
+          await client.query(
+            `UPDATE project_files
+             SET status = 'processing'
+             WHERE id = $1`,
+            [newFileId]
+          );
+          await insertFileProcessingLog(client, {
+            projectId: provisionedShell.projectId,
+            fileId: newFileId,
+            stage: "IMPORT",
+            status: "PROCESSING",
+            message: "Importing and segmenting source file.",
+            details: { sourceFileId: filePlan.sourceFileId }
+          });
+
+          const copiedObjectKey = keyProjectSourceOriginal({
+            departmentId,
+            projectId: provisionedShell.projectId,
+            fileId: newFileId,
+            originalFilename: source.original_name
+          });
+          const copyResult = await copyObject({
+            sourceKey: sourceObjectKey,
+            destinationKey: copiedObjectKey
+          });
+
+          await client.query(
+            `UPDATE project_files
+             SET stored_path = $1,
+                 file_type = $2,
+                 file_type_config_id = $3
+             WHERE id = $4`,
+            [copiedObjectKey, source.file_type, source.file_type_config_id, newFileId]
+          );
+
+          await insertFileArtifact(client, {
+            projectId: provisionedShell.projectId,
+            fileId: newFileId,
+            kind: "source_original",
+            bucket: String(sourceArtifact.bucket || getS3Bucket()),
+            objectKey: copiedObjectKey,
+            sha256: sourceArtifact.sha256 ?? null,
+            etag: copyResult.etag ?? sourceArtifact.etag ?? null,
+            sizeBytes: sourceArtifact.size_bytes ?? null,
+            contentType: sourceArtifact.content_type ?? null,
+            meta: sourceArtifact.meta_json ?? {},
+            createdBy: userContext.username
+          });
+
+          let segments = await loadSeedSegmentsFromSourceFile(client, filePlan.sourceFileId);
+          if (segments.length === 0) {
+            await insertFileProcessingLog(client, {
+              projectId: provisionedShell.projectId,
+              fileId: newFileId,
+              stage: "PARSE",
+              status: "PROCESSING",
+              message: "No existing segments found. Parsing source artifact."
+            });
+            try {
+              segments = await parseSegmentsFromSourceArtifact({
+                client,
+                sourceFile: source,
+                sourceArtifact
+              });
+            } catch (err: any) {
+              const officeReason = formatOfficeParseError(err);
+              throw new Error(officeReason || String(err?.message || "Failed to parse source artifact."));
+            }
+          }
+
+          if (segments.length === 0) {
+            throw new Error("No segments extracted from source file.");
+          }
+
+          await insertSegmentsForFile(client, provisionedShell.projectId, newFileId, segments);
+          await client.query(
+            `UPDATE project_files
+             SET status = 'ready'
+             WHERE id = $1`,
+            [newFileId]
+          );
+          await insertFileProcessingLog(client, {
+            projectId: provisionedShell.projectId,
+            fileId: newFileId,
+            stage: "SEGMENT",
+            status: "READY",
+            message: `Segments prepared (${segments.length}).`,
+            details: { segmentCount: segments.length }
+          });
+          fileStatuses.push({
+            sourceFileId: filePlan.sourceFileId,
+            fileId: newFileId,
+            filename: String(source.original_name || ""),
+            status: "READY",
+            segmentCount: segments.length,
+            error: null
+          });
+        } catch (err: any) {
+          const message = String(err?.message || "Import failed");
+          await client.query(
+            `UPDATE project_files
+             SET status = 'failed'
+             WHERE id = $1`,
+            [newFileId]
+          );
+          await insertFileProcessingLog(client, {
+            projectId: provisionedShell.projectId,
+            fileId: newFileId,
+            stage: "IMPORT",
+            status: "FAILED",
+            message,
+            details: { sourceFileId: filePlan.sourceFileId }
+          });
+          fileStatuses.push({
+            sourceFileId: filePlan.sourceFileId,
+            fileId: newFileId,
+            filename: String(source.original_name || ""),
+            status: "FAILED",
+            segmentCount: 0,
+            error: message
+          });
+        }
+      }
+
+      await client.query(
+        `UPDATE projects
+         SET project_settings = COALESCE(project_settings, '{}'::jsonb) || $2::jsonb
+         WHERE id = $1`,
+        [
+          provisionedShell.projectId,
+          JSON.stringify({
+            createdByAgent: true,
+            sourceFileIds: fileIds,
+            appAgentSourceFileMap: sourceFileMap,
+            ownerUserId: userContext.userId,
+            owner_user_id: userContext.userId,
+            assignedUserId: assignedUser.userId,
+            assigned_user_id: assignedUser.userId
+          })
+        ]
+      );
+
+      const failed = fileStatuses.filter((entry) => entry.status === "FAILED");
+      const ready = fileStatuses.filter((entry) => entry.status === "READY");
+      if (failed.length > 0 || ready.length === 0) {
+        const initError =
+          failed.length > 0
+            ? failed.map((entry) => `${entry.filename}: ${entry.error || "failed"}`).join(" | ").slice(0, 1200)
+            : "No segments extracted from uploaded files.";
+        await client.query(
+          `UPDATE projects
+           SET status = 'failed',
+               init_error = $2,
+               provisioning_updated_at = NOW(),
+               provisioning_finished_at = NOW(),
+               provisioning_progress = $3,
+               provisioning_current_step = 'IMPORT_FILES'
+           WHERE id = $1`,
+          [
+            provisionedShell.projectId,
+            initError,
+            Math.max(0, Math.min(99, Math.round((ready.length / Math.max(1, fileStatuses.length)) * 100)))
+          ]
+        );
+      } else {
+        await client.query(
+          `UPDATE projects
+           SET init_error = NULL,
+               provisioning_updated_at = NOW(),
+               provisioning_current_step = 'IMPORT_FILES'
+           WHERE id = $1`,
+          [provisionedShell.projectId]
+        );
+      }
+
+      const statusRes = await client.query<{ status: string; init_error: string | null }>(
+        `SELECT status::text AS status, init_error
+         FROM projects
+         WHERE id = $1
+         LIMIT 1`,
+        [provisionedShell.projectId]
+      );
+
+      return {
+        projectId: provisionedShell.projectId,
+        name: projectName,
+        status: String(statusRes.rows[0]?.status || provisionedShell.status || "provisioning"),
+        assignedUserId: assignedUser.userId,
+        assignedUsername: assignedUser.username,
+        translationEngineId: selectedEngineId ?? null,
+        rulesetId: selectedRulesetId ?? null,
+        tmxId: selectedTmxId ?? null,
+        termbaseId: selectedTermbaseId ?? null,
+        dueAt: dueAtIso && dueAtIso !== "__invalid__" ? dueAtIso : null,
+        fileIds: createdFileIds,
+        fileStatuses,
+        initError: statusRes.rows[0]?.init_error ? String(statusRes.rows[0]?.init_error) : null
+      };
+    });
+
+    if (provisionedProject.status !== "failed") {
+      try {
+        await enqueueProvisionJobIfImportReady({
+          projectId: provisionedProject.projectId,
+          step: "import",
+          log: (req as any).log
+        });
+      } catch (err) {
+        (req as any).log?.warn?.({ err, projectId: provisionedProject.projectId }, "Failed to queue provision job after agent import");
+      }
+    }
+
+    const projectStatusRes = await db.query<{ status: string; init_error: string | null }>(
+      `SELECT status::text AS status, init_error
+       FROM projects
+       WHERE id = $1
+       LIMIT 1`,
+      [provisionedProject.projectId]
+    );
+    const finalStatus = String(projectStatusRes.rows[0]?.status || provisionedProject.status || "provisioning");
+    const finalInitError = projectStatusRes.rows[0]?.init_error
+      ? String(projectStatusRes.rows[0]?.init_error)
+      : provisionedProject.initError;
+
+    return {
+      ok: true,
+      project: {
+        id: provisionedProject.projectId,
+        name: provisionedProject.name,
+        status: finalStatus,
+        sourceLang: sourceLanguage,
+        targetLangs: targetLanguages,
+        ownerUserId: userContext.userId,
+        assignedUserId: provisionedProject.assignedUserId,
+        assignedUsername: provisionedProject.assignedUsername,
+        translationEngineId: provisionedProject.translationEngineId,
+        rulesetId: provisionedProject.rulesetId,
+        tmxId: provisionedProject.tmxId,
+        termbaseId: provisionedProject.termbaseId,
+        dueAt: provisionedProject.dueAt,
+        initError: finalInitError
+      },
+      nextAction: finalStatus === "ready" ? "OPEN_EDITOR" : "SHOW_PROCESSING",
+      statusUrl: provisionedShell.statusUrl,
+      fileProcessing: provisionedProject.fileStatuses.map((entry) => ({
+        sourceFileId: entry.sourceFileId,
+        fileId: entry.fileId,
+        filename: entry.filename,
+        status: entry.status,
+        segmentCount: entry.segmentCount,
+        error: entry.error
+      })),
+      fileIds: provisionedProject.fileIds
+    };
 
     const created = await withTransaction(async (client) => {
       const projectSettings: Record<string, any> = {
@@ -1086,7 +1559,7 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
           });
 
           const copiedObjectKey = keyProjectSourceOriginal({
-            departmentId,
+            departmentId: departmentId!,
             projectId: Number(project.id),
             fileId: newFileId,
             originalFilename: source.original_name
@@ -1464,7 +1937,7 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
       languages: unknown;
       visibility: string | null;
     }>(
-      canAssignOthers
+      normalizeProjectAccessRole(userContext.role) === "admin"
         ? `SELECT id, label, languages, visibility
            FROM glossaries
            WHERE disabled = FALSE
@@ -1504,9 +1977,9 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
     if (engineRes.rows.length === 0) {
       notices.push({
         kind: "engine_missing",
-        severity: "error",
+        severity: "warning",
         message:
-          "No translation engine is configured/enabled for your account/project scope. A manager/admin can enable it for you."
+          "No translation engine is configured right now. Project creation can continue without one, or an admin can configure it later."
       });
     }
     if (rulesetRes.rows.length === 0) {
@@ -1538,12 +2011,12 @@ export const appAgentRoutes: FastifyPluginAsync<AppAgentRoutesOptions> = async (
       ok: true,
       wizard: {
         steps: [
-          { id: "files", label: "Choose one or more files", required: true },
+          { id: "title", label: "Choose a project title", required: true },
+          { id: "files", label: "Upload at least one file", required: true },
           { id: "target_languages", label: "Choose one or more target languages", required: true },
-          { id: "due_date", label: "Set due date/time", required: false },
-          { id: "assignment", label: "Set project owner/assignee", required: true },
-          { id: "translation_engine", label: "Choose translation engine", required: true },
-          { id: "ruleset", label: "Choose ruleset (optional)", required: false },
+          { id: "assignment", label: "Choose the assignee", required: true },
+          { id: "translation_engine", label: "Choose translation engine (optional)", required: false },
+          { id: "ruleset", label: "Choose rules (optional)", required: false },
           { id: "tmx", label: "Choose TMX (optional)", required: false },
           { id: "termbase", label: "Choose termbase (optional)", required: false },
           { id: "confirmation", label: "Confirm and create project", required: true }

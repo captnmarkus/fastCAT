@@ -163,11 +163,11 @@ async function runInitDatabaseMigrations() {
     CREATE TABLE IF NOT EXISTS app_agent_config (
       id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
       enabled BOOLEAN NOT NULL DEFAULT TRUE,
-      connection_provider TEXT NOT NULL DEFAULT 'mock',
+      connection_provider TEXT NOT NULL DEFAULT 'gateway',
       provider_id INTEGER REFERENCES nmt_providers(id) ON DELETE SET NULL,
       model_name TEXT,
       endpoint TEXT,
-      mock_mode BOOLEAN NOT NULL DEFAULT TRUE,
+      mock_mode BOOLEAN NOT NULL DEFAULT FALSE,
       system_prompt TEXT NOT NULL DEFAULT '',
       enabled_tools JSONB NOT NULL DEFAULT '["translate_snippet","create_project","list_projects","get_project_status"]'::jsonb,
       supported_languages JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -250,11 +250,11 @@ async function runInitDatabaseMigrations() {
 
     ALTER TABLE app_agent_config
       ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE,
-      ADD COLUMN IF NOT EXISTS connection_provider TEXT NOT NULL DEFAULT 'mock',
+      ADD COLUMN IF NOT EXISTS connection_provider TEXT NOT NULL DEFAULT 'gateway',
       ADD COLUMN IF NOT EXISTS provider_id INTEGER REFERENCES nmt_providers(id) ON DELETE SET NULL,
       ADD COLUMN IF NOT EXISTS model_name TEXT,
       ADD COLUMN IF NOT EXISTS endpoint TEXT,
-      ADD COLUMN IF NOT EXISTS mock_mode BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS mock_mode BOOLEAN NOT NULL DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS system_prompt TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS enabled_tools JSONB NOT NULL DEFAULT '["translate_snippet","create_project","list_projects","get_project_status"]'::jsonb,
       ADD COLUMN IF NOT EXISTS supported_languages JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -284,6 +284,17 @@ async function runInitDatabaseMigrations() {
     WHERE enabled_tools IS NULL
        OR enabled_tools = '[]'::jsonb
        OR enabled_tools = '["translate_snippet","create_project"]'::jsonb;
+
+    UPDATE app_agent_config
+    SET connection_provider = 'gateway',
+        mock_mode = FALSE,
+        updated_at = NOW()
+    WHERE id = 1
+      AND COALESCE(updated_by, 'system') = 'system'
+      AND provider_id IS NULL
+      AND NULLIF(BTRIM(COALESCE(model_name, '')), '') IS NULL
+      AND NULLIF(BTRIM(COALESCE(endpoint, '')), '') IS NULL
+      AND provider_secret_enc IS NULL;
 
     DO $$
     BEGIN
@@ -663,11 +674,11 @@ async function runInitDatabaseMigrations() {
     VALUES (
       1,
       TRUE,
-      'mock',
+      'gateway',
       NULL,
       NULL,
       NULL,
-      TRUE,
+      FALSE,
       $1,
       '["translate_snippet","create_project","list_projects","get_project_status"]'::jsonb,
       NULL,

@@ -32,6 +32,27 @@ export type AppAgentGatewayConfig = AppAgentConfig & {
   providerApiKey: string | null;
 };
 
+export type AppAgentAvailabilityState =
+  | "ready_live"
+  | "ready_mock"
+  | "needs_configuration"
+  | "disabled";
+
+export type AppAgentAvailability = {
+  state: AppAgentAvailabilityState;
+  enabled: boolean;
+  usable: boolean;
+  live: boolean;
+  mock: boolean;
+  needsAdminConfiguration: boolean;
+  title: string;
+  description: string;
+  providerLabel: string | null;
+  usingEndpointOverride: boolean;
+  usingDefaultProvider: boolean;
+  missing: string[];
+};
+
 export const APP_AGENT_TOOL_ALLOWLIST: AppAgentToolName[] = [
   "translate_snippet",
   "create_project",
@@ -69,6 +90,15 @@ type AppAgentConfigRow = {
   updated_by: string | null;
   created_at: string | null;
   updated_at: string | null;
+};
+
+type AppAgentProviderRow = {
+  id: number;
+  name: string;
+  provider: string | null;
+  model: string | null;
+  enabled: boolean;
+  secret_enc: string | null;
 };
 
 function normalizeJsonArray(input: unknown): unknown[] {
@@ -143,6 +173,13 @@ function parseProviderSecretApiKey(secretEnc: string | null | undefined): string
   return apiKey || null;
 }
 
+function parseProviderSecretBaseUrl(secretEnc: string | null | undefined): string | null {
+  const secret = decryptJson(secretEnc);
+  if (!secret || typeof secret !== "object") return null;
+  const baseUrl = String((secret as any).baseUrl ?? (secret as any).base_url ?? "").trim();
+  return baseUrl || null;
+}
+
 function rowToConfig(
   row: AppAgentConfigRow | null | undefined,
   opts?: { includeSensitive?: boolean }
@@ -152,11 +189,11 @@ function rowToConfig(
   if (!row) {
     return {
       enabled: true,
-      connectionProvider: "mock",
+      connectionProvider: "gateway",
       providerId: null,
       modelName: "",
       endpoint: "",
-      mockMode: true,
+      mockMode: false,
       systemPrompt: DEFAULT_APP_AGENT_SYSTEM_PROMPT,
       enabledTools: [...APP_AGENT_TOOL_ALLOWLIST],
       providerApiKeyConfigured: false,
@@ -220,11 +257,11 @@ export async function ensureAppAgentConfigSingleton() {
     VALUES (
       1,
       TRUE,
-      'mock',
+      'gateway',
       NULL,
       NULL,
       NULL,
-      TRUE,
+      FALSE,
       $1,
       '["translate_snippet","create_project","list_projects","get_project_status"]'::jsonb,
       NULL,
@@ -238,6 +275,186 @@ export async function ensureAppAgentConfigSingleton() {
     `,
     [DEFAULT_APP_AGENT_SYSTEM_PROMPT]
   );
+}
+
+async function loadAppAgentProviderRow(providerId: number): Promise<AppAgentProviderRow | null> {
+  const res = await db.query<AppAgentProviderRow>(
+    `SELECT id, name, provider, model, enabled, secret_enc
+     FROM nmt_providers
+     WHERE id = $1
+     LIMIT 1`,
+    [providerId]
+  );
+  return res.rows[0] ?? null;
+}
+
+async function loadDefaultAppAgentProviderRow(): Promise<AppAgentProviderRow | null> {
+  const res = await db.query<AppAgentProviderRow>(
+    `SELECT id, name, provider, model, enabled, secret_enc
+     FROM nmt_providers
+     WHERE enabled = TRUE
+       AND LOWER(COALESCE(provider, '')) = 'openai-compatible'
+     ORDER BY id ASC
+     LIMIT 1`
+  );
+  return res.rows[0] ?? null;
+}
+
+function providerUsability(
+  providerRow: AppAgentProviderRow | null | undefined,
+  configModelName: string
+): { usable: boolean; missing: string[]; providerLabel: string | null } {
+  if (!providerRow) {
+    return {
+      usable: false,
+      missing: ["provider"],
+      providerLabel: null
+    };
+  }
+
+  const missing: string[] = [];
+  const providerLabel = String(providerRow.name || "").trim() || `Provider #${providerRow.id}`;
+  const vendor = String(providerRow.provider || "").trim().toLowerCase();
+  const baseUrl = parseProviderSecretBaseUrl(providerRow.secret_enc);
+  const resolvedModel = String(configModelName || "").trim() || String(providerRow.model || "").trim();
+
+  if (!providerRow.enabled) missing.push("provider_enabled");
+  if (vendor !== "openai-compatible") missing.push("provider_vendor");
+  if (!baseUrl) missing.push("provider_base_url");
+  if (!resolvedModel) missing.push("model");
+
+  return {
+    usable: missing.length === 0,
+    missing,
+    providerLabel
+  };
+}
+
+export async function evaluateAppAgentAvailability(
+  configInput?: AppAgentConfig
+): Promise<AppAgentAvailability> {
+  const config = configInput ?? (await loadAppAgentConfig());
+  const liveConfigured = config.connectionProvider === "gateway" && !config.mockMode;
+
+  if (!config.enabled) {
+    return {
+      state: "disabled",
+      enabled: false,
+      usable: false,
+      live: false,
+      mock: false,
+      needsAdminConfiguration: true,
+      title: "App Agent is turned off",
+      description: "An administrator has disabled the app-wide assistant. Enable it again in the admin panel to use chat here.",
+      providerLabel: null,
+      usingEndpointOverride: false,
+      usingDefaultProvider: false,
+      missing: ["enabled"]
+    };
+  }
+
+  if (!liveConfigured) {
+    return {
+      state: "ready_mock",
+      enabled: true,
+      usable: true,
+      live: false,
+      mock: true,
+      needsAdminConfiguration: false,
+      title: "App Agent is available",
+      description: "The assistant is running in mock mode. You can still chat here, but responses are deterministic rather than powered by a live provider.",
+      providerLabel: null,
+      usingEndpointOverride: false,
+      usingDefaultProvider: false,
+      missing: []
+    };
+  }
+
+  const endpointOverride = String(config.endpoint || "").trim();
+  if (endpointOverride) {
+    const missing: string[] = [];
+    if (!String(config.modelName || "").trim()) {
+      missing.push("model");
+    }
+    const usable = missing.length === 0;
+    return {
+      state: usable ? "ready_live" : "needs_configuration",
+      enabled: true,
+      usable,
+      live: usable,
+      mock: false,
+      needsAdminConfiguration: !usable,
+      title: usable ? "App Agent is ready" : "App Agent setup still needs one more step",
+      description: usable
+        ? "The assistant is configured with a live endpoint and is ready to chat."
+        : "A custom endpoint is configured, but the model name is still missing. Finish the App Agent setup in the admin panel.",
+      providerLabel: endpointOverride,
+      usingEndpointOverride: true,
+      usingDefaultProvider: false,
+      missing
+    };
+  }
+
+  const selectedProvider =
+    config.providerId != null && Number.isFinite(config.providerId) && config.providerId > 0
+      ? await loadAppAgentProviderRow(config.providerId)
+      : await loadDefaultAppAgentProviderRow();
+  const providerStatus = providerUsability(selectedProvider, config.modelName);
+  const usingDefaultProvider =
+    config.providerId == null && selectedProvider != null;
+
+  if (providerStatus.usable) {
+    return {
+      state: "ready_live",
+      enabled: true,
+      usable: true,
+      live: true,
+      mock: false,
+      needsAdminConfiguration: false,
+      title: "App Agent is ready",
+      description: usingDefaultProvider
+        ? "The assistant is using the default live provider and is ready to chat."
+        : "The assistant is configured with a live provider and is ready to chat.",
+      providerLabel: providerStatus.providerLabel,
+      usingEndpointOverride: false,
+      usingDefaultProvider,
+      missing: []
+    };
+  }
+
+  let description =
+    "The assistant still needs a usable live provider before chat can start. Finish the App Agent setup in the admin panel.";
+  if (providerStatus.missing.includes("provider")) {
+    description =
+      "No usable live provider is configured for the assistant yet. Finish the App Agent setup in the admin panel.";
+  } else if (providerStatus.missing.includes("provider_enabled")) {
+    description =
+      "The selected provider is disabled. Re-enable it or choose another provider in the App Agent admin panel.";
+  } else if (providerStatus.missing.includes("provider_vendor")) {
+    description =
+      "The selected provider type is not supported by the App Agent yet. Choose an OpenAI-compatible provider or use a custom endpoint.";
+  } else if (providerStatus.missing.includes("provider_base_url")) {
+    description =
+      "The selected provider is missing its base URL. Update the provider or switch to a custom endpoint in the App Agent admin panel.";
+  } else if (providerStatus.missing.includes("model")) {
+    description =
+      "The assistant still needs a model before chat can start. Finish the App Agent setup in the admin panel.";
+  }
+
+  return {
+    state: "needs_configuration",
+    enabled: true,
+    usable: false,
+    live: false,
+    mock: false,
+    needsAdminConfiguration: true,
+    title: "App Agent setup still needs one more step",
+    description,
+    providerLabel: providerStatus.providerLabel,
+    usingEndpointOverride: false,
+    usingDefaultProvider,
+    missing: providerStatus.missing
+  };
 }
 
 async function loadAppAgentConfigRow(): Promise<AppAgentConfigRow | null> {

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   getAppAgentAdminConfig,
   updateAppAgentAdminConfig,
+  type AppAgentAvailability,
   type AppAgentAdminConfig,
   type AppAgentToolName
 } from "../api";
@@ -23,6 +24,7 @@ const TOOL_DESCRIPTIONS: Record<AppAgentToolName, string> = {
 
 export default function AdminAppAgentPage({ currentUser }: { currentUser: AuthUser }) {
   const [config, setConfig] = useState<AppAgentAdminConfig | null>(null);
+  const [availability, setAvailability] = useState<AppAgentAvailability | null>(null);
   const [providerOptions, setProviderOptions] = useState<Array<{ id: number; name: string; model: string; enabled: boolean }>>([]);
   const [allowlistedTools, setAllowlistedTools] = useState<AppAgentToolName[]>([]);
   const [replaceProviderKey, setReplaceProviderKey] = useState(false);
@@ -42,6 +44,7 @@ export default function AdminAppAgentPage({ currentUser }: { currentUser: AuthUs
         const res = await getAppAgentAdminConfig();
         if (cancelled) return;
         setConfig(res.config);
+        setAvailability(res.availability);
         setProviderOptions(res.providers || []);
         setAllowlistedTools(res.allowlistedTools || []);
         setReplaceProviderKey(false);
@@ -77,9 +80,25 @@ export default function AdminAppAgentPage({ currentUser }: { currentUser: AuthUs
   return (
     <div className="py-3">
       <h2 className="mb-3">App Agent</h2>
-      <div className="card-enterprise p-4 d-grid gap-3">
+        <div className="card-enterprise p-4 d-grid gap-3">
         {error ? <div className="alert alert-danger mb-0">{error}</div> : null}
         {success ? <div className="alert alert-success mb-0">{success}</div> : null}
+        {availability ? (
+          <div
+            className={`alert mb-0 ${
+              availability.state === "ready_live"
+                ? "alert-success"
+                : availability.state === "ready_mock"
+                  ? "alert-info"
+                  : availability.state === "disabled"
+                    ? "alert-secondary"
+                    : "alert-warning"
+            }`}
+          >
+            <div className="fw-semibold">{availability.title}</div>
+            <div>{availability.description}</div>
+          </div>
+        ) : null}
 
         <div className="form-check form-switch">
           <input
@@ -338,6 +357,7 @@ export default function AdminAppAgentPage({ currentUser }: { currentUser: AuthUs
                 }
                 const res = await updateAppAgentAdminConfig(payload);
                 setConfig(res.config);
+                setAvailability(res.availability);
                 setReplaceProviderKey(false);
                 setClearProviderKey(false);
                 setProviderKeyInput("");

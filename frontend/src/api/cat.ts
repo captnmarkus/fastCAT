@@ -466,6 +466,27 @@ export type AppAgentToolName =
 
 export type AppAgentConnectionProvider = "mock" | "gateway";
 
+export type AppAgentAvailabilityState =
+  | "ready_live"
+  | "ready_mock"
+  | "needs_configuration"
+  | "disabled";
+
+export type AppAgentAvailability = {
+  state: AppAgentAvailabilityState;
+  enabled: boolean;
+  usable: boolean;
+  live: boolean;
+  mock: boolean;
+  needsAdminConfiguration: boolean;
+  title: string;
+  description: string;
+  providerLabel: string | null;
+  usingEndpointOverride: boolean;
+  usingDefaultProvider: boolean;
+  missing: string[];
+};
+
 export type AppAgentAdminConfig = {
   enabled: boolean;
   connectionProvider: AppAgentConnectionProvider;
@@ -486,6 +507,13 @@ export type AppAgentAdminConfig = {
   updatedBy?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+};
+
+export type AppAgentStatusResponse = {
+  enabled: boolean;
+  connectionProvider: AppAgentConnectionProvider;
+  mockMode: boolean;
+  availability: AppAgentAvailability;
 };
 
 export type AppAgentProviderOption = {
@@ -661,6 +689,7 @@ export async function getOrCreateChatUploadSession(): Promise<ChatUploadSession>
 
 export async function getAppAgentAdminConfig(): Promise<{
   config: AppAgentAdminConfig;
+  availability: AppAgentAvailability;
   providers: AppAgentProviderOption[];
   allowlistedTools: AppAgentToolName[];
 }> {
@@ -669,6 +698,7 @@ export async function getAppAgentAdminConfig(): Promise<{
   });
   return parseJsonResponse<{
     config: AppAgentAdminConfig;
+    availability: AppAgentAvailability;
     providers: AppAgentProviderOption[];
     allowlistedTools: AppAgentToolName[];
   }>("get app agent config", response);
@@ -676,13 +706,23 @@ export async function getAppAgentAdminConfig(): Promise<{
 
 export async function updateAppAgentAdminConfig(
   payload: Partial<AppAgentAdminConfig>
-): Promise<{ config: AppAgentAdminConfig }> {
+): Promise<{ config: AppAgentAdminConfig; availability: AppAgentAvailability }> {
   const response = await fetch(`${APP_AGENT_ADMIN_API_BASE}/config`, {
     method: "PUT",
     headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload)
   });
-  return parseJsonResponse<{ config: AppAgentAdminConfig }>("update app agent config", response);
+  return parseJsonResponse<{ config: AppAgentAdminConfig; availability: AppAgentAvailability }>(
+    "update app agent config",
+    response
+  );
+}
+
+export async function getAppAgentStatus(): Promise<AppAgentStatusResponse> {
+  const response = await fetch(`/api/app-agent/status`, {
+    headers: { ...authHeaders() }
+  });
+  return parseJsonResponse<AppAgentStatusResponse>("get app agent status", response);
 }
 
 

@@ -43,6 +43,17 @@ type SetupDepartmentInput = {
   slug?: string;
 };
 
+type SetupAppAgentInput = {
+  mode: "configure_now" | "finish_later";
+  modelName?: string;
+  endpoint?: string;
+  providerApiKey?: string;
+  providerOrg?: string;
+  providerProject?: string;
+  providerRegion?: string;
+  systemPrompt?: string;
+};
+
 function normalizeSetupDepartments(input: any): SetupDepartmentInput[] {
   const list = Array.isArray(input) ? input : [];
   const normalized: SetupDepartmentInput[] = [];
@@ -74,6 +85,24 @@ function normalizeSetupLanguages(input: any): string[] {
     normalized.push(tag);
   });
   return normalized;
+}
+
+function normalizeSetupAppAgent(input: any): SetupAppAgentInput {
+  const raw = input && typeof input === "object" ? input : {};
+  const mode =
+    String(raw.mode || "").trim().toLowerCase() === "configure_now"
+      ? "configure_now"
+      : "finish_later";
+  return {
+    mode,
+    modelName: String(raw.modelName || raw.model_name || "").trim() || undefined,
+    endpoint: String(raw.endpoint || "").trim() || undefined,
+    providerApiKey: String(raw.providerApiKey || raw.provider_api_key || "").trim() || undefined,
+    providerOrg: String(raw.providerOrg || raw.provider_org || "").trim() || undefined,
+    providerProject: String(raw.providerProject || raw.provider_project || "").trim() || undefined,
+    providerRegion: String(raw.providerRegion || raw.provider_region || "").trim() || undefined,
+    systemPrompt: String(raw.systemPrompt || raw.system_prompt || "").trim() || undefined
+  };
 }
 
 async function readErrorPayload(res: Response): Promise<string> {
@@ -124,23 +153,12 @@ export async function applySetupDefaults(token: string, payload: any) {
     departmentsInput.length > 0
       ? departmentsInput
       : SETUP_DEFAULT_DEPARTMENTS.map((name) => ({ name }));
+  const appAgent = normalizeSetupAppAgent(payload?.appAgent);
 
   const headers = {
     "content-type": "application/json",
     Authorization: `Bearer ${token}`
   };
-
-  for (const dept of departments) {
-    const res = await fetch(`${CAT_API_BASE}/admin/departments`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(dept)
-    });
-    if (res.ok) continue;
-    if (res.status === 409) continue;
-    const detail = await readErrorPayload(res);
-    throw new Error(detail || "Failed to create department");
-  }
 
   const langRes = await fetch(`${CAT_API_BASE}/admin/org/languages`, {
     method: "PUT",
@@ -157,5 +175,53 @@ export async function applySetupDefaults(token: string, payload: any) {
   if (!langRes.ok) {
     const detail = await readErrorPayload(langRes);
     throw new Error(detail || "Failed to update language settings");
+  }
+
+  const appAgentPayload =
+    appAgent.mode === "configure_now"
+      ? {
+          enabled: true,
+          connectionProvider: "gateway",
+          mockMode: false,
+          modelName: appAgent.modelName || "",
+          endpoint: appAgent.endpoint || "",
+          providerApiKey: appAgent.providerApiKey || undefined,
+          providerOrg: appAgent.providerOrg || null,
+          providerProject: appAgent.providerProject || null,
+          providerRegion: appAgent.providerRegion || null,
+          systemPrompt: appAgent.systemPrompt || undefined
+        }
+      : {
+          enabled: true,
+          connectionProvider: "gateway",
+          mockMode: false,
+          modelName: "",
+          endpoint: "",
+          providerApiKey: null,
+          clearProviderApiKey: true,
+          providerOrg: null,
+          providerProject: null,
+          providerRegion: null
+        };
+  const appAgentRes = await fetch(`${CAT_API_BASE}/admin/app-agent/config`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(appAgentPayload)
+  });
+  if (!appAgentRes.ok) {
+    const detail = await readErrorPayload(appAgentRes);
+    throw new Error(detail || "Failed to update App Agent settings");
+  }
+
+  for (const dept of departments) {
+    const res = await fetch(`${CAT_API_BASE}/admin/departments`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(dept)
+    });
+    if (res.ok) continue;
+    if (res.status === 409) continue;
+    const detail = await readErrorPayload(res);
+    throw new Error(detail || "Failed to create department");
   }
 }

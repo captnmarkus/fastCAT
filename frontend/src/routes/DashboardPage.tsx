@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { listInboxItems, listProjects } from "../api";
+import { getAppAgentStatus, listInboxItems, listProjects } from "../api";
 import ChatPanel from "../components/dashboard/ChatPanel";
 import type { AuthUser } from "../types/app";
+import type { AppAgentStatusResponse } from "../api";
 
 type DashboardSummary = {
   activeProjects: number;
@@ -27,12 +28,17 @@ export default function DashboardPage({ currentUser }: { currentUser: AuthUser |
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [agentStatus, setAgentStatus] = useState<AppAgentStatusResponse | null>(null);
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [projects, inboxItems] = await Promise.all([listProjects(), listInboxItems()]);
+      const [projects, inboxItems, nextAgentStatus] = await Promise.all([
+        listProjects(),
+        listInboxItems(),
+        getAppAgentStatus()
+      ]);
 
       const activeProjects = projects.filter((project) => !DONE_STATUSES.has(normalizeStatus(project.status))).length;
       const readyToDownload = projects.filter((project) => DONE_STATUSES.has(normalizeStatus(project.status))).length;
@@ -52,6 +58,7 @@ export default function DashboardPage({ currentUser }: { currentUser: AuthUser |
         readyToDownload,
         averageProgress
       });
+      setAgentStatus(nextAgentStatus);
     } catch (err: any) {
       setError(err?.message || "Failed to load dashboard.");
     } finally {
@@ -121,8 +128,27 @@ export default function DashboardPage({ currentUser }: { currentUser: AuthUser |
           </button>
         </div>
       ) : null}
-
-      <ChatPanel />
+      {agentStatus && !agentStatus.availability.usable ? (
+        <section className="card-enterprise fc-dashboard-agent-placeholder">
+          <div className="fc-dashboard-agent-placeholder-kicker">App Agent</div>
+          <div className="fc-dashboard-agent-placeholder-title">{agentStatus.availability.title}</div>
+          <p className="fc-dashboard-agent-placeholder-copy mb-0">{agentStatus.availability.description}</p>
+          <div className="fc-dashboard-agent-placeholder-meta">
+            {currentUser.role === "admin"
+              ? "Open the admin panel to complete the live agent setup."
+              : "An administrator needs to finish the App Agent setup before chat becomes available here."}
+          </div>
+          {currentUser.role === "admin" ? (
+            <div className="fc-dashboard-agent-placeholder-actions">
+              <button type="button" className="btn btn-dark" onClick={() => navigate("/admin/app-agent")}>
+                Open App Agent Settings
+              </button>
+            </div>
+          ) : null}
+        </section>
+      ) : (
+        <ChatPanel />
+      )}
     </div>
   );
 }

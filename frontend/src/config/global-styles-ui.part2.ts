@@ -739,5 +739,55 @@ export const GLOBAL_STYLES_UI_PART_2 = String.raw`
     width: min(23rem, 100%);
     flex: 0 0 auto;
   }
+
+  .fc-dashboard-agent-placeholder {
+    position: relative;
+    overflow: hidden;
+    padding: clamp(1.15rem, 1vw + 0.95rem, 1.6rem);
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    background:
+      radial-gradient(circle at top right, rgba(14, 165, 233, 0.14), transparent 32%),
+      linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.98));
+    box-shadow: 0 20px 36px rgba(15, 23, 42, 0.08);
+  }
+
+  .fc-dashboard-agent-placeholder::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0.42rem;
+    background: linear-gradient(180deg, #0ea5e9 0%, #14b8a6 100%);
+  }
+
+  .fc-dashboard-agent-placeholder-kicker {
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #0369a1;
+  }
+
+  .fc-dashboard-agent-placeholder-title {
+    margin-top: 0.48rem;
+    font-size: clamp(1.05rem, 0.9rem + 0.45vw, 1.35rem);
+    font-weight: 700;
+    color: #0f172a;
+  }
+
+  .fc-dashboard-agent-placeholder-copy {
+    margin-top: 0.56rem;
+    max-width: 68ch;
+    color: #334155;
+  }
+
+  .fc-dashboard-agent-placeholder-meta {
+    margin-top: 0.7rem;
+    font-size: 0.84rem;
+    color: #475569;
+  }
+
+  .fc-dashboard-agent-placeholder-actions {
+    margin-top: 1rem;
+  }
 `;
 

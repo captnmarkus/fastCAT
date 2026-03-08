@@ -358,11 +358,11 @@
     CREATE TABLE IF NOT EXISTS app_agent_config (
       id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
       enabled BOOLEAN NOT NULL DEFAULT TRUE,
-      connection_provider TEXT NOT NULL DEFAULT 'mock',
+      connection_provider TEXT NOT NULL DEFAULT 'gateway',
       provider_id INTEGER,
       model_name TEXT,
       endpoint TEXT,
-      mock_mode BOOLEAN NOT NULL DEFAULT TRUE,
+      mock_mode BOOLEAN NOT NULL DEFAULT FALSE,
       system_prompt TEXT NOT NULL DEFAULT '',
       enabled_tools JSONB NOT NULL DEFAULT '["translate_snippet","create_project","list_projects","get_project_status"]'::jsonb,
       supported_languages JSONB NOT NULL DEFAULT '[]'::jsonb,

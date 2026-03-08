@@ -17,6 +17,16 @@ export async function initializeSetup(payload: {
   languages?: string[];
   defaults?: { defaultSource?: string; defaultTargets?: string[] };
   departments?: Array<string | { name: string; slug?: string }>;
+  appAgent?: {
+    mode?: "configure_now" | "finish_later";
+    modelName?: string;
+    endpoint?: string;
+    providerApiKey?: string;
+    providerOrg?: string;
+    providerProject?: string;
+    providerRegion?: string;
+    systemPrompt?: string;
+  };
 }): Promise<{ ok: true }> {
   const r = await fetch(`${TM_API_BASE}/setup/initialize`, {
     method: "POST",
