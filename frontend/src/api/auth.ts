@@ -6,6 +6,13 @@ export type SetupStatus = {
   status: "configured" | "not_configured";
 };
 
+export type SetupAppAgentConnectionResult = {
+  ok: boolean;
+  status?: number;
+  latencyMs?: number;
+  resolvedUrl?: string;
+};
+
 export async function getSetupStatus(): Promise<SetupStatus> {
   const r = await fetch(`${TM_API_BASE}/setup/status`);
   if (!r.ok) throw await httpError("setup status", r);
@@ -35,6 +42,23 @@ export async function initializeSetup(payload: {
   });
   if (!r.ok) throw await httpError("setup initialize", r);
   return { ok: true };
+}
+
+export async function testSetupAppAgentConnection(payload: {
+  endpoint: string;
+  modelName: string;
+  providerApiKey?: string;
+  providerOrg?: string;
+  providerProject?: string;
+  providerRegion?: string;
+}): Promise<SetupAppAgentConnectionResult> {
+  const r = await fetch(`${TM_API_BASE}/setup/app-agent/test`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) throw await httpError("setup app agent test", r);
+  return (await r.json()) as SetupAppAgentConnectionResult;
 }
 
 export async function login(username: string, password: string) {

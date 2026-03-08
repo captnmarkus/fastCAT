@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { initializeSetup, login } from "../api";
+import { initializeSetup, login, testSetupAppAgentConnection } from "../api";
 import type { AuthUser } from "../types/app";
 import { normalizeLocale } from "../lib/i18n/locale";
 
@@ -46,6 +46,13 @@ const DEFAULT_SOURCE = "de-DE";
 const DEFAULT_TARGETS = ["en-GB"];
 const DEFAULT_DEPARTMENTS = ["General"];
 const SETUP_STEPS = ["Admin", "Languages", "App Agent", "Departments"] as const;
+
+type AgentConnectionTestState = {
+  status: "idle" | "testing" | "success" | "error";
+  message: string | null;
+  latencyMs: number | null;
+  resolvedUrl: string | null;
+};
 
 function splitList(input: string): string[] {
   return String(input || "")
@@ -132,6 +139,12 @@ export default function SetupWizardPage({
     providerRegion: "",
     systemPrompt: ""
   });
+  const [agentConnectionTest, setAgentConnectionTest] = useState<AgentConnectionTestState>({
+    status: "idle",
+    message: null,
+    latencyMs: null,
+    resolvedUrl: null
+  });
   const [departmentsText, setDepartmentsText] = useState(DEFAULT_DEPARTMENTS.join("\n"));
 
   const languageList = useMemo(() => parseLanguageList(languageText), [languageText]);
@@ -170,6 +183,56 @@ export default function SetupWizardPage({
     defaultSourceValid &&
     defaultTargetsValid &&
     canContinueAgent;
+
+  function resetAgentConnectionTest() {
+    setAgentConnectionTest({
+      status: "idle",
+      message: null,
+      latencyMs: null,
+      resolvedUrl: null
+    });
+  }
+
+  function updateAppAgentField<K extends keyof typeof appAgent>(field: K, value: string) {
+    setAppAgent((prev) => ({ ...prev, [field]: value }));
+    resetAgentConnectionTest();
+  }
+
+  async function handleTestAgentConnection() {
+    if (saving || appAgentMode !== "configure_now" || !trimmedAgentEndpoint || !agentEndpointValid) return;
+    if (!appAgent.modelName.trim()) return;
+
+    setAgentConnectionTest({
+      status: "testing",
+      message: null,
+      latencyMs: null,
+      resolvedUrl: null
+    });
+
+    try {
+      const result = await testSetupAppAgentConnection({
+        endpoint: trimmedAgentEndpoint,
+        modelName: appAgent.modelName.trim(),
+        providerApiKey: appAgent.providerApiKey.trim() || undefined,
+        providerOrg: appAgent.providerOrg.trim() || undefined,
+        providerProject: appAgent.providerProject.trim() || undefined,
+        providerRegion: appAgent.providerRegion.trim() || undefined
+      });
+      setAgentConnectionTest({
+        status: "success",
+        message: "Connection successful. Fastcat could reach the configured endpoint.",
+        latencyMs: Number.isFinite(Number(result.latencyMs)) ? Number(result.latencyMs) : null,
+        resolvedUrl: result.resolvedUrl ? String(result.resolvedUrl) : null
+      });
+    } catch (err: any) {
+      setAgentConnectionTest({
+        status: "error",
+        message: err?.userMessage || err?.message || "Connection test failed.",
+        latencyMs: null,
+        resolvedUrl: null
+      });
+    }
+  }
 
   async function handleFinish() {
     if (!canFinish || saving) return;
@@ -399,7 +462,10 @@ export default function SetupWizardPage({
                       type="radio"
                       name="app-agent-mode"
                       checked={appAgentMode === "finish_later"}
-                      onChange={() => setAppAgentMode("finish_later")}
+                      onChange={() => {
+                        setAppAgentMode("finish_later");
+                        resetAgentConnectionTest();
+                      }}
                       disabled={saving}
                     />
                     <div>
@@ -418,7 +484,10 @@ export default function SetupWizardPage({
                       type="radio"
                       name="app-agent-mode"
                       checked={appAgentMode === "configure_now"}
-                      onChange={() => setAppAgentMode("configure_now")}
+                      onChange={() => {
+                        setAppAgentMode("configure_now");
+                        resetAgentConnectionTest();
+                      }}
                       disabled={saving}
                     />
                     <div className="w-100">
@@ -434,7 +503,7 @@ export default function SetupWizardPage({
                             <input
                               className={`form-control${!appAgent.modelName.trim() ? " is-invalid" : ""}`}
                               value={appAgent.modelName}
-                              onChange={(e) => setAppAgent((prev) => ({ ...prev, modelName: e.target.value }))}
+                              onChange={(e) => updateAppAgentField("modelName", e.target.value)}
                               placeholder="gpt-4.1-mini"
                               disabled={saving}
                             />
@@ -447,7 +516,7 @@ export default function SetupWizardPage({
                             <input
                               className={`form-control${!trimmedAgentEndpoint || !agentEndpointValid ? " is-invalid" : ""}`}
                               value={appAgent.endpoint}
-                              onChange={(e) => setAppAgent((prev) => ({ ...prev, endpoint: e.target.value }))}
+                              onChange={(e) => updateAppAgentField("endpoint", e.target.value)}
                               placeholder="https://provider.example/v1"
                               disabled={saving}
                             />
@@ -461,9 +530,7 @@ export default function SetupWizardPage({
                               type="password"
                               className="form-control"
                               value={appAgent.providerApiKey}
-                              onChange={(e) =>
-                                setAppAgent((prev) => ({ ...prev, providerApiKey: e.target.value }))
-                              }
+                              onChange={(e) => updateAppAgentField("providerApiKey", e.target.value)}
                               placeholder="Leave blank for local or unauthenticated endpoints"
                               disabled={saving}
                             />
@@ -473,7 +540,7 @@ export default function SetupWizardPage({
                             <input
                               className="form-control"
                               value={appAgent.providerOrg}
-                              onChange={(e) => setAppAgent((prev) => ({ ...prev, providerOrg: e.target.value }))}
+                              onChange={(e) => updateAppAgentField("providerOrg", e.target.value)}
                               disabled={saving}
                             />
                           </div>
@@ -482,9 +549,7 @@ export default function SetupWizardPage({
                             <input
                               className="form-control"
                               value={appAgent.providerProject}
-                              onChange={(e) =>
-                                setAppAgent((prev) => ({ ...prev, providerProject: e.target.value }))
-                              }
+                              onChange={(e) => updateAppAgentField("providerProject", e.target.value)}
                               disabled={saving}
                             />
                           </div>
@@ -493,9 +558,7 @@ export default function SetupWizardPage({
                             <input
                               className="form-control"
                               value={appAgent.providerRegion}
-                              onChange={(e) =>
-                                setAppAgent((prev) => ({ ...prev, providerRegion: e.target.value }))
-                              }
+                              onChange={(e) => updateAppAgentField("providerRegion", e.target.value)}
                               disabled={saving}
                             />
                           </div>
@@ -505,11 +568,53 @@ export default function SetupWizardPage({
                               className="form-control"
                               rows={4}
                               value={appAgent.systemPrompt}
-                              onChange={(e) =>
-                                setAppAgent((prev) => ({ ...prev, systemPrompt: e.target.value }))
-                              }
+                              onChange={(e) => updateAppAgentField("systemPrompt", e.target.value)}
                               disabled={saving}
                             />
+                          </div>
+                          <div className="col-12 d-grid gap-2">
+                            <div className="d-flex align-items-center gap-3 flex-wrap">
+                              <button
+                                type="button"
+                                className="btn btn-outline-secondary"
+                                onClick={handleTestAgentConnection}
+                                disabled={
+                                  saving ||
+                                  agentConnectionTest.status === "testing" ||
+                                  !appAgent.modelName.trim() ||
+                                  !trimmedAgentEndpoint ||
+                                  !agentEndpointValid
+                                }
+                              >
+                                {agentConnectionTest.status === "testing" ? "Testing..." : "Test connection"}
+                              </button>
+                              <div className="text-muted small">
+                                Runs from the Fastcat backend so you can verify the app can actually reach the endpoint.
+                              </div>
+                            </div>
+
+                            {agentConnectionTest.status === "success" ? (
+                              <div className="alert alert-success mb-0">
+                                <div>{agentConnectionTest.message}</div>
+                                <div className="small mt-1">
+                                  {agentConnectionTest.latencyMs != null
+                                    ? `Latency: ${agentConnectionTest.latencyMs} ms. `
+                                    : null}
+                                  {agentConnectionTest.resolvedUrl
+                                    ? `Resolved URL: ${agentConnectionTest.resolvedUrl}`
+                                    : null}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {agentConnectionTest.status === "error" ? (
+                              <div className="alert alert-danger mb-0">
+                                <div>{agentConnectionTest.message}</div>
+                                <div className="small mt-1">
+                                  Fix the endpoint or model and test again before finishing setup.
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       ) : null}

@@ -37,6 +37,7 @@ import {
 } from "../user-utils.js";
 
 const MAX_LOGIN_ATTEMPTS = 3;
+const SETUP_APP_AGENT_TEST_TIMEOUT_MS = 15_000;
 
 function signToken(app: FastifyInstance, user: User): string {
   return app.jwt.sign({
@@ -49,12 +50,158 @@ function signToken(app: FastifyInstance, user: User): string {
   } as JwtUser);
 }
 
+function resolveSetupAppAgentChatCompletionsUrl(endpoint: string): string {
+  const trimmed = String(endpoint || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  if (/\/chat\/completions$/i.test(trimmed)) return trimmed;
+  if (/\/v\d+(?:\.\d+)?$/i.test(trimmed)) return `${trimmed}/chat/completions`;
+  return `${trimmed}/v1/chat/completions`;
+}
+
+function setupAppAgentEndpointHint(endpoint: string): string {
+  try {
+    const url = new URL(String(endpoint || "").trim());
+    const host = String(url.hostname || "").trim().toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
+      return " If Fastcat runs in Docker, `localhost` points to the container itself. Use `host.docker.internal` or the Docker service name for your LocalAI/OpenAI-compatible endpoint instead.";
+    }
+  } catch {
+    // ignore invalid URLs here; validation happens earlier
+  }
+  return "";
+}
+
+async function allowSetupOnlyOrAuthenticatedAdmin(request: any, reply: any): Promise<boolean> {
+  const adminCount = await countAdmins();
+  if (adminCount === 0) return true;
+
+  const authHeader = String(request.headers.authorization || "").trim();
+  if (!authHeader) {
+    reply.code(409).send({ error: "Setup already completed." });
+    return false;
+  }
+
+  try {
+    await request.jwtVerify();
+  } catch {
+    reply.code(401).send({ error: "Unauthorized" });
+    return false;
+  }
+
+  const user = (request as any).user as JwtUser | undefined;
+  if (!user || user.role !== "admin") {
+    reply.code(403).send({ error: "Admin privileges required" });
+    return false;
+  }
+  return true;
+}
+
 export function registerSetupAuthUserRoutes(app: FastifyInstance) {
   app.get("/api/health", async () => ({ ok: true }));
 
   app.get("/api/setup/status", async () => {
     const adminCount = await countAdmins();
     return { status: adminCount > 0 ? "configured" : "not_configured" };
+  });
+
+  app.post("/api/setup/app-agent/test", async (req, reply) => {
+    if (!(await allowSetupOnlyOrAuthenticatedAdmin(req, reply))) return;
+
+    const body = (req.body as any) || {};
+    const endpoint = String(body.endpoint || "").trim();
+    const modelName = String(body.modelName || body.model_name || "").trim();
+    const apiKey = String(body.providerApiKey || body.provider_api_key || "").trim();
+    const providerOrg = String(body.providerOrg || body.provider_org || "").trim();
+    const providerProject = String(body.providerProject || body.provider_project || "").trim();
+    const providerRegion = String(body.providerRegion || body.provider_region || "").trim();
+    const endpointHint = setupAppAgentEndpointHint(endpoint);
+
+    if (!endpoint) return reply.code(400).send({ error: "endpoint is required" });
+    if (!modelName) return reply.code(400).send({ error: "modelName is required" });
+
+    try {
+      // eslint-disable-next-line no-new
+      new URL(endpoint);
+    } catch {
+      return reply.code(400).send({ error: "endpoint must be a valid URL." });
+    }
+
+    const url = resolveSetupAppAgentChatCompletionsUrl(endpoint);
+    const headers: Record<string, string> = {
+      "content-type": "application/json"
+    };
+    if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+    if (providerOrg) headers["openai-organization"] = providerOrg;
+    if (providerProject) headers["openai-project"] = providerProject;
+    if (providerRegion) headers["x-provider-region"] = providerRegion;
+
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SETUP_APP_AGENT_TEST_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: "system", content: "Fastcat setup connectivity test." },
+            { role: "user", content: "Reply with OK" }
+          ],
+          temperature: 0,
+          max_tokens: 8
+        }),
+        signal: controller.signal
+      });
+      const latencyMs = Date.now() - startedAt;
+
+      if (!res.ok) {
+        let detail = "Connection failed";
+        try {
+          const contentType = res.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            const payload = (await res.json()) as any;
+            if (payload && typeof payload === "object") {
+              detail = String(payload.error || payload.message || detail);
+            }
+          } else {
+            const text = String(await res.text()).trim();
+            if (text) detail = text;
+          }
+        } catch {
+          // ignore response parsing errors
+        }
+        return reply.code(502).send({
+          ok: false,
+          error: `${detail}${endpointHint}`,
+          status: res.status,
+          latencyMs,
+          resolvedUrl: url
+        });
+      }
+
+      return {
+        ok: true,
+        status: res.status,
+        latencyMs,
+        resolvedUrl: url
+      };
+    } catch (err: any) {
+      const latencyMs = Date.now() - startedAt;
+      const error =
+        err?.name === "AbortError"
+          ? `Connection test timed out after ${SETUP_APP_AGENT_TEST_TIMEOUT_MS / 1000}s.`
+          : `${String(err?.message || "Connection failed")}${endpointHint}`;
+      return reply.code(502).send({
+        ok: false,
+        error,
+        latencyMs,
+        resolvedUrl: url
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
   });
 
   app.post("/api/setup/initialize", async (req, reply) => {

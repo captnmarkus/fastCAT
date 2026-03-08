@@ -1,5 +1,8 @@
 const CAT_API_BASE = String(process.env.CAT_API_URL || "http://cat-api:4000/api/cat")
   .replace(/\/+$/, "");
+const APP_AGENT_ADMIN_API_BASE = String(
+  process.env.APP_AGENT_ADMIN_API_URL || "http://cat-api:4000/api/admin/app-agent"
+).replace(/\/+$/, "");
 
 const SETUP_DEFAULT_LANGUAGES = [
   "de-DE",
@@ -203,7 +206,7 @@ export async function applySetupDefaults(token: string, payload: any) {
           providerProject: null,
           providerRegion: null
         };
-  const appAgentRes = await fetch(`${CAT_API_BASE}/admin/app-agent/config`, {
+  const appAgentRes = await fetch(`${APP_AGENT_ADMIN_API_BASE}/config`, {
     method: "PUT",
     headers,
     body: JSON.stringify(appAgentPayload)
