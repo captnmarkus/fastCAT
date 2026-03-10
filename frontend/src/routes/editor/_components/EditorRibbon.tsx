@@ -231,7 +231,6 @@ export default function EditorRibbon(props: {
       clearTimeoutRef(pasteHintTimerRef);
     };
   }, []);
-
   useEffect(() => {
     if (tab !== "home" && tab !== "view") {
       setOverflowCount(0);
@@ -264,7 +263,6 @@ export default function EditorRibbon(props: {
   const hiddenViewGroups = useMemo(() => {
     return new Set(VIEW_OVERFLOW_ORDER.slice(0, overflowCount));
   }, [overflowCount]);
-
 
   const symbolCategories = useMemo(() => {
     if (recentSymbols.length === 0) return BASE_SYMBOL_CATEGORIES;

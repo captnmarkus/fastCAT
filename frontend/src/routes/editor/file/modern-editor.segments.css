@@ -1,0 +1,287 @@
+.fc-modern-concordance-tools {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.fc-modern-card {
+  border: 1px solid var(--fc-modern-border);
+  border-radius: 0.6rem;
+  background: #fff;
+  padding: 0.52rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.fc-modern-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.fc-modern-card-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.fc-modern-meta-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  border-radius: 999px;
+  padding: 0.1rem 0.42rem;
+  font-size: 0.67rem;
+  color: rgba(17, 24, 39, 0.74);
+  background: #fff;
+}
+
+.fc-modern-meta-badge.is-forbidden {
+  border-color: rgba(220, 38, 38, 0.35);
+  color: #991b1b;
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.fc-modern-highlight {
+  background: rgba(250, 204, 21, 0.42);
+  border-radius: 0.2rem;
+  padding: 0 0.05rem;
+}
+
+.fc-modern-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.fc-modern-term-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--fc-modern-border);
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+  font-size: 0.73rem;
+  background: #fff;
+}
+
+.fc-modern-term-chip-status {
+  font-size: 0.66rem;
+  color: var(--fc-modern-muted);
+}
+
+.fc-modern-term-chip.is-preferred {
+  border-color: rgba(22, 163, 74, 0.45);
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.fc-modern-term-chip.is-forbidden {
+  border-color: rgba(220, 38, 38, 0.38);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.fc-modern-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.fc-modern-issue-link {
+  border: 1px solid var(--fc-modern-border);
+  border-radius: 0.55rem;
+  background: #fff;
+  padding: 0.45rem;
+  display: grid;
+  gap: 0.24rem;
+  text-align: left;
+}
+
+.fc-modern-issue-link:hover {
+  background: rgba(17, 24, 39, 0.04);
+}
+
+.fc-modern-segment-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.fc-modern-segment-header,
+.fc-modern-segment-row {
+  display: grid;
+  grid-template-columns: 11.2rem minmax(220px, 1fr) minmax(240px, 1fr) 7.4rem;
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.fc-modern-segment-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border-bottom: 1px solid var(--fc-modern-border);
+  padding: 0.42rem 0.65rem;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fc-modern-muted);
+  font-weight: 700;
+}
+
+.fc-modern-segment-scroll {
+  min-height: 0;
+  overflow: auto;
+  flex: 1;
+}
+
+.fc-modern-segment-row {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+  padding: 0.45rem 0.65rem;
+  transition: background-color 120ms ease, border-color 120ms ease;
+  background: transparent;
+}
+
+.fc-modern-segment-row:hover {
+  background: rgba(17, 24, 39, 0.03);
+}
+
+.fc-modern-segment-row.active {
+  background: rgba(17, 24, 39, 0.06);
+}
+
+.fc-modern-segment-row.selected {
+  box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.18);
+}
+
+.fc-modern-segment-row.has-occurrence {
+  box-shadow: inset 0 0 0 1px rgba(13, 148, 136, 0.45);
+}
+
+.fc-modern-segment-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 0.38rem;
+  min-width: 0;
+}
+
+.fc-modern-segment-index {
+  font-variant-numeric: tabular-nums;
+  color: var(--fc-modern-muted);
+  font-size: 0.82rem;
+  min-width: 2.7rem;
+}
+
+.fc-modern-state-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  flex: 0 0 auto;
+}
+
+.fc-modern-state-dot.is-draft,
+.fc-modern-state-dot.is-nmt_draft {
+  background: #facc15;
+  border-color: #eab308;
+}
+
+.fc-modern-state-dot.is-reviewed {
+  background: #22c55e;
+  border-color: #16a34a;
+}
+
+.fc-modern-state-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  padding: 0.12rem 0.45rem;
+  font-size: 0.68rem;
+  color: var(--fc-modern-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-modern-state-pill.is-reviewed {
+  color: #166534;
+  border-color: rgba(22, 163, 74, 0.32);
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.fc-modern-segment-source,
+.fc-modern-segment-target {
+  min-width: 0;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.fc-modern-segment-source-text {
+  font-size: var(--fc-modern-editor-font-size, 14px);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.fc-modern-segment-source-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.fc-modern-issue-badge {
+  border: 1px solid rgba(180, 83, 9, 0.32);
+  border-radius: 999px;
+  background: rgba(180, 83, 9, 0.08);
+  color: var(--fc-modern-issue);
+  padding: 0.08rem 0.4rem;
+  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.fc-modern-target-input {
+  border-color: rgba(17, 24, 39, 0.22);
+  min-height: 3.1rem;
+  resize: vertical;
+  font-size: var(--fc-modern-editor-font-size, 14px);
+  line-height: 1.42;
+}
+
+.fc-modern-target-preview {
+  min-height: 2.55rem;
+  border: 1px solid rgba(17, 24, 39, 0.13);
+  border-radius: 0.5rem;
+  background: #fff;
+  padding: 0.38rem 0.5rem;
+  line-height: 1.38;
+  font-size: var(--fc-modern-editor-font-size, 14px);
+}
+
+.fc-modern-target-preview.locked {
+  background: rgba(17, 24, 39, 0.04);
+}
+
+.fc-modern-tag-actions {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.fc-modern-segment-actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.26rem;
+  opacity: 0.45;
+}
+

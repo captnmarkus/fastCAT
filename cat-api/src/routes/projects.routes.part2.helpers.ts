@@ -154,15 +154,25 @@ export function parseOptionalNumericOverride(value: any): { value: number | null
 export function normalizeTranslationPlan(
   translationPlanRaw: any[],
   parseOptionalInt: ParseOptionalInt,
+  normalizeLang: NormalizeLang,
   normalizeLangList: NormalizeLangList,
   normalizeJsonObject: NormalizeJsonObject
 ): TranslationPlanEntry[] {
-  return translationPlanRaw.map((entry: any) => ({
-    fileId: parseOptionalInt(entry?.fileId ?? entry?.file_id),
-    tempKey: String(entry?.tempKey ?? entry?.temp_key ?? "").trim(),
-    targetLangs: normalizeLangList(entry?.targetLangs ?? entry?.target_langs ?? entry?.targets),
-    assignments: normalizeJsonObject(entry?.assignments ?? entry?.assignmentMap ?? {})
-  }));
+  return translationPlanRaw.map((entry: any) => {
+    const rawAssignments = normalizeJsonObject(entry?.assignments ?? entry?.assignmentMap ?? {});
+    const assignments = Object.entries(rawAssignments).reduce<Record<string, any>>((acc, [targetLang, assignment]) => {
+      const normalizedTargetLang = normalizeLang(targetLang);
+      if (!normalizedTargetLang) return acc;
+      acc[normalizedTargetLang] = normalizeJsonObject(assignment);
+      return acc;
+    }, {});
+    return {
+      fileId: parseOptionalInt(entry?.fileId ?? entry?.file_id),
+      tempKey: String(entry?.tempKey ?? entry?.temp_key ?? "").trim(),
+      targetLangs: normalizeLangList(entry?.targetLangs ?? entry?.target_langs ?? entry?.targets),
+      assignments
+    };
+  });
 }
 
 export function normalizeTemplateOverrideMap(

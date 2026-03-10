@@ -1,0 +1,298 @@
+.fc-modern-row-action-reviewed.is-reviewed {
+  border-color: rgba(22, 163, 74, 0.5);
+  background: rgba(22, 163, 74, 0.1);
+  color: #166534;
+}
+
+.fc-modern-row-action-reviewed.is-reviewed:hover:not(:disabled) {
+  border-color: rgba(22, 163, 74, 0.65);
+  background: rgba(22, 163, 74, 0.16);
+  color: #14532d;
+}
+
+.fc-modern-row-action-lock.is-locked {
+  border-color: rgba(17, 24, 39, 0.32);
+  background: rgba(17, 24, 39, 0.08);
+  color: #111827;
+}
+
+.fc-modern-segment-row:hover .fc-modern-segment-actions,
+.fc-modern-segment-row.active .fc-modern-segment-actions {
+  opacity: 1;
+}
+
+.fc-modern-loading {
+  padding: 0.5rem 0.8rem;
+  border-top: 1px solid var(--fc-modern-border);
+}
+
+.fc-modern-preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.fc-modern-preview-header {
+  border-bottom: 1px solid var(--fc-modern-border);
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0.5rem 0.65rem;
+  font-weight: 700;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fc-modern-muted);
+}
+
+.fc-modern-preview-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.fc-modern-preview-row {
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-left-width: 3px;
+  border-radius: 0.52rem;
+  background: #fff;
+  padding: 0.38rem 0.45rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.45rem;
+  cursor: pointer;
+}
+
+.fc-modern-preview-row.active {
+  border-color: rgba(17, 24, 39, 0.34);
+  background: rgba(17, 24, 39, 0.05);
+}
+
+.fc-modern-preview-row.is-heading {
+  border-left-color: #111111;
+}
+
+.fc-modern-preview-row.h1 .fc-modern-preview-text,
+.fc-modern-preview-row.h2 .fc-modern-preview-text {
+  font-weight: 700;
+}
+
+.fc-modern-preview-index {
+  color: var(--fc-modern-muted);
+  font-size: 0.78rem;
+  min-width: 1.6rem;
+}
+
+.fc-modern-preview-text {
+  overflow-wrap: anywhere;
+}
+
+.fc-modern-bottom {
+  border-top: 1px solid var(--fc-modern-border);
+  background: #fff;
+  min-height: 8.4rem;
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+}
+
+.fc-modern-bottom-resizer {
+  flex: 0 0 auto;
+  height: 0.6rem;
+  cursor: ns-resize;
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.08), rgba(17, 24, 39, 0));
+  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.fc-modern-bottom-resizer:hover {
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.18), rgba(17, 24, 39, 0.02));
+}
+
+.fc-modern-bottom-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.65rem;
+  flex: 1;
+}
+
+body.fc-modern-editor-resizing {
+  cursor: ns-resize !important;
+  user-select: none;
+}
+
+.fc-modern-bottom-collapsed {
+  border-top: 1px solid var(--fc-modern-border);
+  padding: 0.45rem 0.7rem;
+  display: flex;
+  justify-content: flex-end;
+  background: #fff;
+}
+
+.fc-modern-history-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.fc-modern-history-item {
+  border: 1px solid var(--fc-modern-border);
+  border-radius: 0.55rem;
+  background: #fff;
+  text-align: left;
+  padding: 0.48rem;
+  display: grid;
+  gap: 0.23rem;
+}
+
+.fc-modern-history-item:hover {
+  background: rgba(17, 24, 39, 0.04);
+}
+
+.fc-modern-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.fc-modern-rendered-shell {
+  display: grid;
+  gap: 0.5rem;
+  min-height: 100%;
+}
+
+.fc-modern-rendered-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.fc-modern-rendered-viewer {
+  border: 1px solid var(--fc-modern-border);
+  border-radius: 0.55rem;
+  overflow: hidden;
+  min-height: 15rem;
+  background: #fff;
+}
+
+.fc-modern-rendered-frame {
+  width: 100%;
+  height: min(60vh, 34rem);
+  border: 0;
+  display: block;
+}
+
+.fc-modern-rendered-image-wrap {
+  overflow: auto;
+  max-height: min(60vh, 34rem);
+  background: #f8f8f8;
+}
+
+.fc-modern-rendered-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.fc-modern-rendered-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--fc-modern-muted);
+}
+
+.fc-modern-rendered-error {
+  border: 1px solid rgba(185, 28, 28, 0.3);
+  background: rgba(185, 28, 28, 0.06);
+  border-radius: 0.55rem;
+  padding: 0.7rem;
+}
+
+.fc-modern-rendered-warning {
+  border: 1px solid rgba(180, 83, 9, 0.28);
+  background: rgba(180, 83, 9, 0.08);
+  border-radius: 0.55rem;
+  padding: 0.55rem 0.65rem;
+}
+
+.fc-modern-rendered-fallback {
+  padding: 0.85rem;
+}
+
+.fc-modern-rendered-status-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.fc-modern-rendered-status-item {
+  border: 1px solid var(--fc-modern-border);
+  border-radius: 0.45rem;
+  background: #fff;
+  padding: 0.45rem 0.55rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.fc-modern-rendered-status-block {
+  border: 1px solid var(--fc-modern-border);
+  border-radius: 0.45rem;
+  background: #fff;
+  padding: 0.55rem;
+}
+
+.fc-modern-rendered-details {
+  margin: 0;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  border-radius: 0.45rem;
+  background: #fafafa;
+  padding: 0.55rem;
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.fc-modern-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  padding: 1rem;
+}
+
+.fc-modern-modal {
+  width: min(30rem, 100%);
+  border: 1px solid var(--fc-modern-border-strong);
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+}
+
+.fc-modern-modal-header,
+.fc-modern-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--fc-modern-border);
+}
+
+.fc-modern-modal-footer {
+  border-top: 1px solid var(--fc-modern-border);
+  border-bottom: 0;
+  justify-content: flex-end;
+}
+
+.fc-modern-modal-body {
+  padding: 0.7rem;
+}
+

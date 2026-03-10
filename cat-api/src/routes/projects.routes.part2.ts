@@ -648,6 +648,7 @@ export async function registerProjectRoutesPart2(app: FastifyInstance) {
       const translationPlan = normalizeTranslationPlan(
         translationPlanRaw,
         parseOptionalInt,
+        normalizeLang,
         normalizeLangList,
         normalizeJsonObject
       );

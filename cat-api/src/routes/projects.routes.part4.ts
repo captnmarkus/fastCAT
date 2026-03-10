@@ -65,7 +65,6 @@ import {
   userProjectsAssignedKey,
   userProjectsCreatedKey
 } from "../lib/user-buckets.js";
-
 import {
   aggregateCustomFields,
   aggregateEntryAudit,
@@ -154,7 +153,6 @@ import {
   UploadType,
   withTimeout
 } from './projects.helpers.js';
-
 
 export async function registerProjectRoutesPart4(app: FastifyInstance) {
   // --- DELETE Project ---

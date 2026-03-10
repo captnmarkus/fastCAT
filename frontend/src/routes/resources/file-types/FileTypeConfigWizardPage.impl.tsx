@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import type { AuthUser } from "../../../types/app";
 import {
   createParsingTemplate,
   createFileTypeConfig,
@@ -33,8 +32,9 @@ import {
   DEFAULT_XML,
   defaultRenderedPreviewMethodForFileType,
   deriveFileTypeFromConfig,
-  FILE_TYPE_CARDS,
+  getRenderedPreviewMethodOptions,
   normalizeFileTypeKind,
+  parseBooleanFlag,
   normalizeParsingTemplateConfigForClient,
   normalizeTemplateRuleText,
   normalizeXmlParsingTemplateConfigForClient,
@@ -55,33 +55,26 @@ import {
   type XmlWizardConfig
 } from "./FileTypeConfigWizard.helpers";
 import FileTypeConfigWizardConfigStep from "./FileTypeConfigWizardConfigStep";
+import FileTypeConfigWizardBasicsStep from "./FileTypeConfigWizardBasicsStep";
+import FileTypeConfigWizardPendingState from "./FileTypeConfigWizardPendingState";
 import FileTypeConfigWizardPreviewStep from "./FileTypeConfigWizardPreviewStep";
-
-function parseBooleanFlag(value: unknown): boolean {
-  if (typeof value === "boolean") return value;
-  const raw = String(value ?? "").trim().toLowerCase();
-  return raw === "true" || raw === "1" || raw === "yes" || raw === "on";
-}
-
-export default function FileTypeConfigWizardPage({ currentUser }: { currentUser: AuthUser }) {
+import FileTypeConfigWizardReviewStep from "./FileTypeConfigWizardReviewStep";
+import FileTypeConfigWizardTypeStep from "./FileTypeConfigWizardTypeStep";
+export default function FileTypeConfigWizardPage() {
   const nav = useNavigate();
   const params = useParams<{ id?: string }>();
   const [searchParams] = useSearchParams();
   const configId = parsePositiveInt(params.id);
   const isEdit = configId != null;
-
   const [loading, setLoading] = useState(isEdit);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initial, setInitial] = useState<FileTypeConfig | null>(null);
-
   const [step, setStep] = useState<WizardStepKey>("type");
-
   const [fileType, setFileType] = useState<FileTypeKind | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [disabled, setDisabled] = useState(false);
   const [agentDefault, setAgentDefault] = useState(false);
-
   const [htmlCfg, setHtmlCfg] = useState<HtmlWizardConfig>({ ...DEFAULT_HTML });
   const [xmlCfg, setXmlCfg] = useState<XmlWizardConfig>({ ...DEFAULT_XML });
   const [pdfCfg, setPdfCfg] = useState<PdfWizardConfig>({ ...DEFAULT_PDF });
@@ -93,7 +86,6 @@ export default function FileTypeConfigWizardPage({ currentUser }: { currentUser:
   const [renderedPreviewDefaultOn, setRenderedPreviewDefaultOn] = useState(false);
   const [xmlRenderedPreviewXsltTemplateId, setXmlRenderedPreviewXsltTemplateId] = useState("");
   const [xmlRenderedPreviewRendererProfileId, setXmlRenderedPreviewRendererProfileId] = useState("");
-
   const [templates, setTemplates] = useState<ParsingTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
@@ -103,7 +95,6 @@ export default function FileTypeConfigWizardPage({ currentUser }: { currentUser:
   const [viewTemplateJsonLoading, setViewTemplateJsonLoading] = useState(false);
   const [viewTemplateJsonError, setViewTemplateJsonError] = useState<string | null>(null);
   const [viewTemplateJsonText, setViewTemplateJsonText] = useState("");
-
   const templateUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [templateEditorMode, setTemplateEditorMode] = useState<TemplateEditorMode>("none");
   const [templateSourceUploadId, setTemplateSourceUploadId] = useState<number | null>(null);
@@ -132,7 +123,6 @@ export default function FileTypeConfigWizardPage({ currentUser }: { currentUser:
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewResult, setPreviewResult] = useState<FileTypePreviewResult | null>(null);
   const [previewShowTags, setPreviewShowTags] = useState(true);
-
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -439,36 +429,17 @@ export default function FileTypeConfigWizardPage({ currentUser }: { currentUser:
     return true;
   }, [effectiveFileType, name, selectedTemplate, selectedTemplateId, step, templateEditorMode]);
 
-  const renderedPreviewMethodOptions = useMemo(() => {
-    if (effectiveFileType === "xml") {
-      return [
-        { value: "xml_raw_pretty", label: "XML (raw formatted)" },
-        { value: "xml_xslt", label: "XML via XSLT to HTML" }
-      ] as Array<{ value: RenderedPreviewMethod; label: string }>;
-    }
-    if (effectiveFileType === "docx" || effectiveFileType === "pptx" || effectiveFileType === "xlsx") {
-      return [
-        { value: "pdf", label: "PDF" },
-        { value: "images", label: "Images (fallback to PDF)" }
-      ] as Array<{ value: RenderedPreviewMethod; label: string }>;
-    }
-    return [{ value: "html", label: "HTML" }] as Array<{ value: RenderedPreviewMethod; label: string }>;
-  }, [effectiveFileType]);
+  const renderedPreviewMethodOptions = getRenderedPreviewMethodOptions(effectiveFileType);
 
-  function goToStep(next: WizardStepKey) {
-    setSaveError(null);
-    setStep(next);
-  }
+  function goToStep(next: WizardStepKey) { setSaveError(null); setStep(next); }
 
   function goNext() {
-    const idx = stepIndexForKey(step);
-    const next = STEP_ORDER[idx + 1]?.key;
+    const next = STEP_ORDER[stepIndexForKey(step) + 1]?.key;
     if (next) goToStep(next);
   }
 
   function goBack() {
-    const idx = stepIndexForKey(step);
-    const prev = STEP_ORDER[idx - 1]?.key;
+    const prev = STEP_ORDER[stepIndexForKey(step) - 1]?.key;
     if (prev) goToStep(prev);
   }
 
@@ -792,28 +763,8 @@ export default function FileTypeConfigWizardPage({ currentUser }: { currentUser:
     }
   }
 
-  if (loading) {
-    return (
-      <div className="py-4">
-        <div className="text-muted d-flex align-items-center gap-2">
-          <span className="spinner-border spinner-border-sm" />
-          <span>Loading file type configuration...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (loadError) {
-    return (
-      <div className="py-4">
-        <div className="alert alert-danger d-flex align-items-center justify-content-between">
-          <div>{loadError}</div>
-          <button type="button" className="btn btn-outline-light btn-sm" onClick={() => nav("/resources/file-types")}>
-            Back
-          </button>
-        </div>
-      </div>
-    );
+  if (loading || loadError) {
+    return <FileTypeConfigWizardPendingState loading={loading} loadError={loadError} onBack={() => nav("/resources/file-types")} />;
   }
 
   return (
@@ -852,165 +803,40 @@ export default function FileTypeConfigWizardPage({ currentUser }: { currentUser:
         }
       >
         {step === "type" && (
-          <>
-            <div className="fw-semibold mb-2">Choose a file type</div>
-            <div className="text-muted small mb-3">Select exactly one type. The next steps will be tailored to it.</div>
-            <div className="row g-3">
-              {FILE_TYPE_CARDS.map((card) => {
-                const selected = effectiveFileType === card.value;
-                return (
-                  <div className="col-md-6 col-lg-4" key={card.value}>
-                    <button
-                      type="button"
-                      className={`w-100 text-start border rounded p-3 bg-white ${selected ? "border-dark" : "border-light"}`}
-                      onClick={() => {
-                        if (lockFileType) return;
-                        setFileType(card.value);
-                      }}
-                      disabled={lockFileType}
-                      style={{ minHeight: 120 }}
-                    >
-                      <div className="d-flex align-items-center gap-2 mb-2">
-                        <i className={`bi ${card.icon} fs-4`} aria-hidden="true" />
-                        <div className="fw-semibold">{card.label}</div>
-                        {selected && <span className="badge text-bg-dark ms-auto">Selected</span>}
-                      </div>
-                      <div className="text-muted small">{card.description}</div>
-                      {lockFileType && selected && (
-                        <div className="text-muted small mt-2">File type is locked for existing configurations.</div>
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </>
+          <FileTypeConfigWizardTypeStep
+            effectiveFileType={effectiveFileType}
+            lockFileType={lockFileType}
+            onSelect={(nextFileType) => {
+              if (lockFileType) return;
+              setFileType(nextFileType);
+            }}
+          />
         )}
 
         {step === "basics" && (
-          <>
-            <div className="fw-semibold mb-3">Basics</div>
-            <div className="row g-3">
-              <div className="col-lg-8">
-                <label className="form-label">Name</label>
-                <input className="form-control" value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-              <div className="col-lg-4">
-                <label className="form-label">Status</label>
-                <div className="form-check mt-2">
-                  <input
-                    id="ftc-disabled"
-                    type="checkbox"
-                    className="form-check-input"
-                    checked={disabled}
-                    onChange={(e) => setDisabled(e.target.checked)}
-                  />
-                  <label className="form-check-label" htmlFor="ftc-disabled">
-                    Disabled
-                  </label>
-                </div>
-                <div className="form-check mt-2">
-                  <input
-                    id="ftc-agent-default"
-                    type="checkbox"
-                    className="form-check-input"
-                    checked={agentDefault}
-                    onChange={(e) => setAgentDefault(e.target.checked)}
-                  />
-                  <label className="form-check-label" htmlFor="ftc-agent-default">
-                    Use as App Agent default
-                  </label>
-                </div>
-                <div className="form-text">
-                  Chat uploads prefer this configuration when multiple configs exist for the same file type.
-                </div>
-              </div>
-              <div className="col-12">
-                <div className="border rounded bg-white p-3">
-                  <div className="fw-semibold mb-2">Rendered Preview</div>
-                  <div className="row g-3">
-                    <div className="col-md-4">
-                      <div className="form-check mt-1">
-                        <input
-                          id="ftc-rendered-preview-enabled"
-                          type="checkbox"
-                          className="form-check-input"
-                          checked={supportsRenderedPreview}
-                          onChange={(e) => setSupportsRenderedPreview(e.target.checked)}
-                        />
-                        <label className="form-check-label" htmlFor="ftc-rendered-preview-enabled">
-                          Enable rendered preview in editor
-                        </label>
-                      </div>
-                    </div>
-                    <div className="col-md-4">
-                      <label className="form-label">Method</label>
-                      <select
-                        className="form-select"
-                        value={renderedPreviewMethod}
-                        disabled={!supportsRenderedPreview}
-                        onChange={(e) => setRenderedPreviewMethod(e.target.value as RenderedPreviewMethod)}
-                      >
-                        {renderedPreviewMethodOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="col-md-4">
-                      <div className="form-check mt-4 pt-1">
-                        <input
-                          id="ftc-rendered-preview-default-on"
-                          type="checkbox"
-                          className="form-check-input"
-                          checked={renderedPreviewDefaultOn}
-                          disabled={!supportsRenderedPreview}
-                          onChange={(e) => setRenderedPreviewDefaultOn(e.target.checked)}
-                        />
-                        <label className="form-check-label" htmlFor="ftc-rendered-preview-default-on">
-                          Open by default in editor
-                        </label>
-                      </div>
-                    </div>
-                    {effectiveFileType === "xml" && renderedPreviewMethod === "xml_xslt" ? (
-                      <>
-                        <div className="col-md-6">
-                          <label className="form-label">XSLT template ID (optional)</label>
-                          <input
-                            className="form-control"
-                            value={xmlRenderedPreviewXsltTemplateId}
-                            disabled={!supportsRenderedPreview}
-                            onChange={(e) => setXmlRenderedPreviewXsltTemplateId(e.target.value)}
-                            placeholder="e.g. 42"
-                          />
-                        </div>
-                        <div className="col-md-6">
-                          <label className="form-label">Renderer profile ID (optional)</label>
-                          <input
-                            className="form-control"
-                            value={xmlRenderedPreviewRendererProfileId}
-                            disabled={!supportsRenderedPreview}
-                            onChange={(e) => setXmlRenderedPreviewRendererProfileId(e.target.value)}
-                            placeholder="e.g. default-xml-web"
-                          />
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                  <div className="form-text mt-2">
-                    Controls whether the editor shows bottom-panel rendered preview for this file type.
-                  </div>
-                </div>
-              </div>
-              <div className="col-12">
-                <label className="form-label">Description (optional)</label>
-                <textarea className="form-control" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
-              </div>
-            </div>
-          </>
+          <FileTypeConfigWizardBasicsStep
+            name={name}
+            setName={setName}
+            disabled={disabled}
+            setDisabled={setDisabled}
+            agentDefault={agentDefault}
+            setAgentDefault={setAgentDefault}
+            supportsRenderedPreview={supportsRenderedPreview}
+            setSupportsRenderedPreview={setSupportsRenderedPreview}
+            renderedPreviewMethod={renderedPreviewMethod}
+            setRenderedPreviewMethod={setRenderedPreviewMethod}
+            renderedPreviewMethodOptions={renderedPreviewMethodOptions}
+            renderedPreviewDefaultOn={renderedPreviewDefaultOn}
+            setRenderedPreviewDefaultOn={setRenderedPreviewDefaultOn}
+            effectiveFileType={effectiveFileType}
+            xmlRenderedPreviewXsltTemplateId={xmlRenderedPreviewXsltTemplateId}
+            setXmlRenderedPreviewXsltTemplateId={setXmlRenderedPreviewXsltTemplateId}
+            xmlRenderedPreviewRendererProfileId={xmlRenderedPreviewRendererProfileId}
+            setXmlRenderedPreviewRendererProfileId={setXmlRenderedPreviewRendererProfileId}
+            description={description}
+            setDescription={setDescription}
+          />
         )}
-
         {step === "config" && (
           <FileTypeConfigWizardConfigStep
             {...{
@@ -1106,129 +932,29 @@ export default function FileTypeConfigWizardPage({ currentUser }: { currentUser:
             setPreviewShowTags={setPreviewShowTags}
           />
         )}
-
-
         {step === "review" && (
-          <>
-            <div className="fw-semibold mb-2">Review</div>
-            {!payloadConfig ? (
-              <div className="text-muted">Complete previous steps first.</div>
-            ) : (
-              <div className="row g-3">
-                <div className="col-lg-6">
-                  <div className="text-muted small">File type</div>
-                  <div className="fw-semibold text-uppercase">{payloadConfig.fileType}</div>
-                </div>
-                <div className="col-lg-6">
-                  <div className="text-muted small">Status</div>
-                  <div className="fw-semibold">{disabled ? "Disabled" : "Enabled"}</div>
-                </div>
-                <div className="col-lg-6">
-                  <div className="text-muted small">App Agent default</div>
-                  <div className="fw-semibold">{agentDefault ? "Yes" : "No"}</div>
-                </div>
-                <div className="col-12">
-                  <div className="text-muted small">Name</div>
-                  <div className="fw-semibold">{name.trim() || "-"}</div>
-                </div>
-                <div className="col-12">
-                  <div className="text-muted small">Rendered preview</div>
-                  <div className="small">
-                    Enabled: <span className="fw-semibold">{supportsRenderedPreview ? "Yes" : "No"}</span> · Method:{" "}
-                    <span className="fw-semibold">{renderedPreviewMethod}</span> · Default open:{" "}
-                    <span className="fw-semibold">{renderedPreviewDefaultOn ? "Yes" : "No"}</span>
-                    {payloadConfig.fileType === "xml" && renderedPreviewMethod === "xml_xslt" ? (
-                      <>
-                        {" "}· XSLT template ID: <span className="fw-semibold">{xmlRenderedPreviewXsltTemplateId.trim() || "-"}</span> · Renderer profile:{" "}
-                        <span className="fw-semibold">{xmlRenderedPreviewRendererProfileId.trim() || "-"}</span>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-                {(payloadConfig.fileType === "html" || payloadConfig.fileType === "xml") && (
-                  <div className="col-12">
-                    <div className="text-muted small">Extraction template</div>
-                    <div className="fw-semibold">{selectedTemplate ? selectedTemplate.name : "Not selected"}</div>
-                  </div>
-                )}
-
-                {payloadConfig.fileType === "html" && (
-                  <div className="col-12">
-                    <div className="text-muted small">HTML settings</div>
-                    <div className="small">
-                      Segmenter: <span className="fw-semibold">{htmlCfg.segmenter}</span> · Preserve whitespace:{" "}
-                      <span className="fw-semibold">{htmlCfg.preserveWhitespace ? "Yes" : "No"}</span> · Normalize spaces:{" "}
-                      <span className="fw-semibold">{htmlCfg.normalizeSpaces ? "Yes" : "No"}</span> · Inline tags as placeholders:{" "}
-                      <span className="fw-semibold">{htmlCfg.inlineTagPlaceholders ? "Yes" : "No"}</span>
-                    </div>
-                  </div>
-                )}
-
-                {payloadConfig.fileType === "xml" && (
-                  <div className="col-12">
-                    <div className="text-muted small">XML settings</div>
-                    <div className="small">
-                      Segmenter: <span className="fw-semibold">{xmlCfg.segmenter}</span> · Preserve structure/whitespace:{" "}
-                      <span className="fw-semibold">{xmlCfg.preserveWhitespace ? "Yes" : "No"}</span>
-                    </div>
-                  </div>
-                )}
-
-                {payloadConfig.fileType === "pdf" && (
-                  <div className="col-12">
-                    <div className="text-muted small">PDF settings</div>
-                    <div className="small">
-                      Layout mode: <span className="fw-semibold">{pdfCfg.layoutMode}</span> · Segmenter:{" "}
-                      <span className="fw-semibold">{pdfCfg.segmenter}</span>
-                    </div>
-                  </div>
-                )}
-
-                {payloadConfig.fileType === "docx" && (
-                  <div className="col-12">
-                    <div className="text-muted small">DOCX settings</div>
-                    <div className="small">
-                      Segmenter: <span className="fw-semibold">{docxCfg.segmenter}</span> · Comments:{" "}
-                      <span className="fw-semibold">{docxCfg.includeComments ? "Yes" : "No"}</span> · Footnotes:{" "}
-                      <span className="fw-semibold">{docxCfg.includeFootnotes ? "Yes" : "No"}</span> · Preserve formatting tags:{" "}
-                      <span className="fw-semibold">{docxCfg.preserveFormattingTags ? "Yes" : "No"}</span>
-                    </div>
-                  </div>
-                )}
-
-                {payloadConfig.fileType === "pptx" && (
-                  <div className="col-12">
-                    <div className="text-muted small">PPTX settings</div>
-                    <div className="small">
-                      Segmenter: <span className="fw-semibold">{pptxCfg.segmenter}</span> · Speaker notes:{" "}
-                      <span className="fw-semibold">{pptxCfg.includeSpeakerNotes ? "Yes" : "No"}</span> · Preserve formatting tags:{" "}
-                      <span className="fw-semibold">{pptxCfg.preserveFormattingTags ? "Yes" : "No"}</span>
-                    </div>
-                  </div>
-                )}
-
-                {payloadConfig.fileType === "xlsx" && (
-                  <div className="col-12">
-                    <div className="text-muted small">XLSX settings</div>
-                    <div className="small">
-                      Segmenter: <span className="fw-semibold">{xlsxCfg.segmenter}</span> · Cell comments:{" "}
-                      <span className="fw-semibold">{xlsxCfg.includeCellComments ? "Yes" : "No"}</span> · Preserve formatting tags:{" "}
-                      <span className="fw-semibold">{xlsxCfg.preserveFormattingTags ? "Yes" : "No"}</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="col-12">
-                  <div className="text-muted small">Preview</div>
-                  <div className="fw-semibold">
-                    {previewResult ? `${previewResult.total} segments (${previewResult.kind})` : "Not run (optional)"}
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
+          <FileTypeConfigWizardReviewStep
+            payloadConfig={payloadConfig}
+            disabled={disabled}
+            agentDefault={agentDefault}
+            name={name}
+            supportsRenderedPreview={supportsRenderedPreview}
+            renderedPreviewMethod={renderedPreviewMethod}
+            renderedPreviewDefaultOn={renderedPreviewDefaultOn}
+            xmlRenderedPreviewXsltTemplateId={xmlRenderedPreviewXsltTemplateId}
+            xmlRenderedPreviewRendererProfileId={xmlRenderedPreviewRendererProfileId}
+            selectedTemplate={selectedTemplate}
+            htmlCfg={htmlCfg}
+            xmlCfg={xmlCfg}
+            pdfCfg={pdfCfg}
+            docxCfg={docxCfg}
+            pptxCfg={pptxCfg}
+            xlsxCfg={xlsxCfg}
+            previewResult={previewResult}
+          />
         )}
       </WizardShell>
     </div>
   );
 }
+

@@ -50,6 +50,31 @@ export function defaultRenderedPreviewMethodForFileType(fileType: FileTypeKind |
   return "html";
 }
 
+export function getRenderedPreviewMethodOptions(fileType: FileTypeKind | null): Array<{
+  value: RenderedPreviewMethod;
+  label: string;
+}> {
+  if (fileType === "xml") {
+    return [
+      { value: "xml_raw_pretty", label: "XML (raw formatted)" },
+      { value: "xml_xslt", label: "XML via XSLT to HTML" }
+    ];
+  }
+  if (fileType === "docx" || fileType === "pptx" || fileType === "xlsx") {
+    return [
+      { value: "pdf", label: "PDF" },
+      { value: "images", label: "Images (fallback to PDF)" }
+    ];
+  }
+  return [{ value: "html", label: "HTML" }];
+}
+
+export function parseBooleanFlag(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  const raw = String(value ?? "").trim().toLowerCase();
+  return raw === "true" || raw === "1" || raw === "yes" || raw === "on";
+}
+
 export type HtmlWizardConfig = {
   parsingTemplateId: string;
   segmenter: "lines" | "sentences";
