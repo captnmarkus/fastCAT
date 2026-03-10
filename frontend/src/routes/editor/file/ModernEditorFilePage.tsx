@@ -281,14 +281,21 @@ export default function ModernEditorFilePage(props: {
     setBottomTab,
     taskId
   });
+  const activeSegmentId = editor.active?.id ?? null;
 
   useEffect(() => {
+    if (!activeSegmentId) {
+      setHistoryEntries([]);
+      setHistoryError(null);
+      setHistoryLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setHistoryLoading(true);
     setHistoryError(null);
-    void getSegmentHistory(taskId, controller.signal)
-      .then((entries) => {
-        setHistoryEntries(entries);
+    void getSegmentHistory(activeSegmentId, { signal: controller.signal })
+      .then((history) => {
+        setHistoryEntries(Array.isArray(history?.entries) ? history.entries : []);
       })
       .catch((err: any) => {
         if (err?.name === "AbortError") return;
@@ -298,7 +305,7 @@ export default function ModernEditorFilePage(props: {
         setHistoryLoading(false);
       });
     return () => controller.abort();
-  }, [taskId]);
+  }, [activeSegmentId]);
   const openFindModal = useCallback((mode: "find" | "replace") => {
     setFindReplaceMode(mode);
     setFindReplaceOpen(true);

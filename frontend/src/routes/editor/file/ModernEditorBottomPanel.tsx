@@ -66,6 +66,7 @@ export default function ModernEditorBottomPanel(props: {
   }
 
   const busy = renderedPreviewBusy(props.renderedPreviewStatus, props.renderedPreviewLoading);
+  const historyEntries = Array.isArray(props.historyEntries) ? props.historyEntries : [];
   const signedUrl = props.renderedPreviewDetails?.signedUrl ? String(props.renderedPreviewDetails.signedUrl) : "";
   const viewerType = renderedPreviewViewerType(props.renderedPreviewDetails, props.renderedPreviewConfiguredMethod);
   const methodUsed =
@@ -158,11 +159,11 @@ export default function ModernEditorBottomPanel(props: {
             <div className="text-muted small">Loading segment history...</div>
           ) : props.historyError ? (
             <div className="text-danger small">{props.historyError}</div>
-          ) : props.historyEntries.length === 0 ? (
+          ) : historyEntries.length === 0 ? (
             <div className="text-muted small">No history entries for this segment.</div>
           ) : (
             <div className="fc-modern-history-list">
-              {props.historyEntries.map((entry) => (
+              {historyEntries.map((entry) => (
                 <button
                   key={entry.id}
                   type="button"
