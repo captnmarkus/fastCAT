@@ -17,6 +17,14 @@ import httpx
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from app.app_agent_provider_runtime import (
+  ProviderConfig,
+  chat_completions_url,
+  fetch_provider,
+  normalize_base_url,
+  proxy_chat_completions,
+  resolve_default_provider,
+)
 from app.app_agent_runtime import *
 from app.app_agent_wizard import _load_workspace_languages
 
