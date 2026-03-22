@@ -1,85 +1,153 @@
-# TM Lite (React + Node) - a tiny translation-memory UI
+# FastCAT
 
-Minimal, self-hosted UI that talks to **t5memory** plus a MateCAT-style CAT stack. Stack: React SPA + Fastify TM proxy + Fastify CAT API + OpenAI-style LLM gateway + Nginx, all in Docker. Open at **http://localhost:9991** after `docker compose up -d --build`.
+FastCAT is a self-hosted, browser-based CAT/TMS stack for translation teams. It combines project intake, translation memory, terminology, rules, MT/LLM provider management, a browser editor, and an app-wide assistant in one Docker deployment.
+
+> License: source-available for non-commercial use only. Commercial use requires a separate paid license. See [LICENSE](./LICENSE).
+
+## Current state
+
+The repository is no longer a small "TM Lite" demo. The current application includes:
+
+- Global Setup for first-run provisioning and first admin creation
+- Role-based access for `admin`, `manager`, and `reviewer`
+- Dashboard with summary metrics and the App Agent chat panel
+- Projects area with a multi-step creation wizard, provisioning flow, downloads, and project detail views
+- Inbox for assigned work
+- Browser editor with classic and modern modes, TM/TB/MT/LLM suggestions, concordance, QA/issues, history, bulk actions, and rendered previews
+- Resources area for project templates, file type configurations, JSON/extraction templates, translation engines, translation memories, termbases, rulesets, and NMT/LLM providers
+- Admin pages for users, stats, language settings, departments, and App Agent configuration
+- Background provisioning and pretranslation workers
+
+The codebase and tests currently cover XLIFF/XML, HTML/XHTML/XTML, and Office document flows (`.docx`, `.pptx`, `.xlsx`). TMX-backed translation memory is handled through `t5memory` plus `tm-proxy`.
+
+## Architecture
+
+FastCAT runs as a multi-service Docker stack:
+
+| Service | Purpose | Default port |
+| --- | --- | --- |
+| `web` | Nginx serving the frontend and reverse proxying the APIs | `9991` |
+| `frontend` | React 19 + Vite single-page app | built into `web` |
+| `cat-api` | Main CAT/TMS API, project handling, editor APIs, resources, chat backend | `4000` |
+| `tm-proxy` | Auth, user management, and TM/TMX proxy APIs | `3001` |
+| `llm-gateway` | OpenAI-compatible provider gateway and App Agent runtime support | `5005` |
+| `tm-db` | Postgres persistence | `5433` |
+| `redis` | Rate limits and worker/support state | `6379` |
+| `minio` | S3-compatible object storage for uploads and generated artifacts | `9000` / `9001` |
+| `t5memory` | Translation memory engine | `4040` |
+| `tm-backup` | Periodic Postgres backup container | internal |
 
 ## Quick start
+
+Requirements:
+
+- Docker with Compose support
+
+Start the full stack:
+
 ```bash
 docker compose up -d --build
-# open http://localhost:9991
-# on first run you will be guided through Global Setup to create the first admin
 ```
 
-## In-app agent (dashboard chat)
-- The dashboard now renders a single top summary card plus an app-wide assistant chat panel.
-- Chat threads/messages are persisted per authenticated user in Postgres (`chat_threads`, `chat_messages`, `tool_calls`).
-- Backend chat API is exposed at `/api/chat/*` and proxied to `cat-api`.
-- Thread management is supported in-app (switch/create/rename/delete per user).
-- Chat rate limits are enforced via Redis-backed counters (distributed-safe).
-- Admin chat observability endpoints:
-  - `GET /api/cat/admin/chat/usage`
-  - `GET /api/cat/admin/chat/usage/export`
-  - `GET /api/cat/admin/chat/audit`
+Then open `http://localhost:9991`.
 
-### Local development (agent)
+On the first run, FastCAT redirects to **Global Setup**. Complete that flow to create the first admin account and initialize the application.
+
+## Local development
+
+For day-to-day development, the simplest path is to run the full Docker stack and optionally run the frontend or `cat-api` locally.
+
+Frontend:
+
 ```bash
-# API
-cd cat-api
-npm install
-npm run dev
-
-# Frontend (optional local Vite)
 cd frontend
 npm install
 npm run dev
 ```
 
-### Agent-related environment variables
-- `CHAT_AGENT_SYSTEM_PROMPT`: server-side system prompt used by the app agent.
-- `CHAT_LLM_PROVIDER_ID`: optional specific enabled provider id from `nmt_providers`; when unset, first enabled provider is used.
-- `CHAT_RATE_LIMIT_PER_MINUTE`: per-user rate limit for chat requests (default `30`).
-- `CHAT_MAX_HISTORY_MESSAGES`: bounded history window loaded per agent turn (default `30`).
-- `CHAT_TRANSLATE_MAX_CHARS`: maximum snippet length for `translate_snippet` tool (default `1500`).
-- `VITE_CHAT_API_BASE`: frontend override for chat API base (default `/api/chat`).
-
-## User management & roles
-- The SSO stub has been replaced with credential-based auth handled by **tm-proxy**. On first start, Global Setup prompts you to create the first admin and default configuration. No other users are created automatically.
-- Users are scoped to projects that were assigned to them. Admins can see all projects. Managers can access glossary management and project assignment features.
-- Admins can create, disable, delete, unlock, and reset users, review organization-wide usage stats, manage TMX libraries, and curate the organization glossary. Managers can upload/download TMX files and manage glossaries. Those controls live under **Settings** (`/settings`, alias `/admin`), reachable from the gear dropdown next to your name.
-- Every project now consumes the same organization glossary: any CSV or TBX/XML file inside `./glossaries` is loaded on startup (and can be replaced from Settings), and ad-hoc admin entries expand on top. Translators get a glossary search panel plus automatic per-segment matches in the editor instead of project-scoped glossaries.
-
-## Services
-- **postgres** / **redis** - persistence for TM/glossary data and future background buckets.
-- **minio** - S3-compatible object storage for all file blobs (uploads, derived artifacts, template JSON, TMX, terminology). In AWS, switch to S3 via env vars only.
-- **tm-proxy** - authentication and translation memory endpoints backed by Postgres (Global Setup creates the initial admin).
-- tm-proxy waits for Postgres to accept connections before seeding; adjust retry behavior with `TM_DB_INIT_MAX_ATTEMPTS` and `TM_DB_INIT_RETRY_DELAY_MS` if your database takes longer to boot.
-- **cat-api** - MateCAT-like project/file/segment management with XLIFF import/export plus glossary + LLM proxy endpoints.
-- **llm-gateway** - Python OpenAI-compatible `/v1/chat/completions` proxy that routes using provider configs stored in Postgres.
-- **web** - Vite build served via nginx with reverse proxies for `/api`, `/api/cat`, and `/api/llm`.
-
-## Assets
-- **TMX** – No TMX files are preloaded on first start. Upload TMX files via Settings (Admin/Manager) to make them available for project creation.
-- **glossaries/** – CSV glossaries that can be pre-loaded into a project during creation. A starter `sample-glossary.csv` is included; drop more files here and restart to make them available.
-
-## Configuring the LLM gateway
-Create an **OpenAI-compatible** provider in the UI: **Settings → Resources → NMT/LLM Providers**.
-
-### Using a local OpenAI-compatible model
-Set the provider **Base URL** to `http://localhost:8000/v1` (or `http://host.docker.internal:8000/v1`), set the **Model**, and leave **API Key** empty.
-
-The gateway rewrites `localhost` to `host.docker.internal` by default so containers can reach a model running on the host OS; set `LLM_GATEWAY_LOCALHOST_BRIDGE=off` to disable that behavior.
-
-## Termbase XML (MTF) custom fields backfill
-If a termbase was imported before custom field parsing was added, entry/term fields can be empty even though the XML contains `<descrip>` data. You can re-import into a fresh termbase, or backfill the existing one using the XML source file:
+CAT API:
 
 ```bash
 cd cat-api
-npx tsx src/scripts/backfill-termbase-xml.ts --termbase-id 123 --file C:\path\to\kk_glossar.xml
-# add --dry-run to preview without writing
+npm install
+npm run dev
 ```
 
-Note: Updating a termbase structure does not retroactively populate entry/term values; run the backfill (or re-import) to populate `entry_fields`, `language_fields`, and `term_fields`.
+The remaining services are typically left on Docker unless you are working on them directly.
 
-## Termbase exports (schema-driven)
-- CSV export is **long** format (one row per term) with columns: `entry_id`, `concept_id`, `language`, `term`, `status`, plus `entry__<Field>`, `lang__<Field>`, `term__<Field>` derived from the termbase structure.
-- TBX export includes entry/language/term `<descrip type="...">` blocks for structure-defined fields.
-- Structure schema export: `GET /api/cat/termbases/:id/structure/export` returns the termbase structure JSON.
+## Key runtime notes
+
+- Authentication is handled by `tm-proxy`.
+- Project, resource, and editor APIs are exposed from `cat-api`.
+- Files and derived artifacts are stored in MinIO by default. In AWS-style deployments, the same code can point at S3 via environment variables.
+- The App Agent stores chat threads, messages, and tool calls in Postgres.
+- `llm-gateway` speaks an OpenAI-compatible API and can bridge `localhost` inside containers to `host.docker.internal` for local model endpoints.
+- `./glossaries` is mounted into the stack and available to `cat-api` at startup.
+- No TMX libraries are preloaded automatically; upload them through the UI.
+
+## Testing
+
+Service tests:
+
+```bash
+cd frontend
+npm test
+```
+
+```bash
+cd cat-api
+npm test
+```
+
+Docker smoke checks:
+
+```bash
+node scripts/docker-smoke-check.mjs
+node scripts/app-agent-project-flow-smoke.mjs
+```
+
+Optional UI/screenshot checks:
+
+```bash
+node scripts/capture-ui-screenshots.mjs
+node scripts/capture-collection-shell-screens.mjs
+```
+
+The smoke scripts exercise admin, manager, and reviewer flows, project creation, termbase access rules, and guided App Agent project creation.
+
+## Selected environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `JWT_SECRET` | Shared JWT signing secret used by the app services |
+| `TM_DB_URL`, `CAT_DB_URL` | Postgres connection strings |
+| `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_PUBLIC_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Object storage configuration |
+| `REDIS_URL` | Redis connection string |
+| `TM_PROXY_URL` | `cat-api` to `tm-proxy` base URL |
+| `LLM_GATEWAY_URL` | `cat-api` to `llm-gateway` base URL |
+| `LLM_GATEWAY_LOCALHOST_BRIDGE` | Localhost rewrite for container-to-host model access |
+| `APP_AGENT_INTERNAL_SECRET` | Internal auth between App Agent components |
+| `CHAT_AGENT_SYSTEM_PROMPT` | Server-side system prompt for the App Agent |
+| `CHAT_LLM_PROVIDER_ID` | Optional fixed provider for chat |
+| `CHAT_RATE_LIMIT_PER_MINUTE` | Per-user chat rate limit |
+| `CHAT_MAX_HISTORY_MESSAGES` | Chat history window loaded per turn |
+| `CHAT_TRANSLATE_MAX_CHARS` | Character limit for snippet translation tool calls |
+
+## Repository layout
+
+- [`frontend/`](./frontend) - React UI
+- [`cat-api/`](./cat-api) - main backend
+- [`tm-proxy/`](./tm-proxy) - auth and TM/TMX proxy
+- [`llm-gateway/`](./llm-gateway) - Python gateway for providers and agent runtime
+- [`web/`](./web) - Nginx packaging for the frontend
+- [`docs/`](./docs) - design notes, acceptance notes, and screenshot helpers
+- [`scripts/`](./scripts) - smoke checks and screenshot capture helpers
+- [`example_files/`](./example_files) - sample input files for manual testing
+
+## License
+
+FastCAT is source-available, not MIT-licensed.
+
+- Non-commercial use is allowed under the terms in [`LICENSE`](./LICENSE).
+- Commercial use is not granted by default.
+- Any commercial use requires a separate written paid license from the copyright holder.
