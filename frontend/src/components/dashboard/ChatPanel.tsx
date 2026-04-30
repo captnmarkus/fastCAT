@@ -138,6 +138,37 @@ function mergeUploadedFiles(
   return Array.from(merged.values());
 }
 
+function serializeUploadedFiles(files: UploadedChatFile[]) {
+  return files.map((entry) => ({
+    fileId: entry.fileId,
+    filename: entry.filename,
+    fileType: entry.fileType
+  }));
+}
+
+function mergeContentJsonWithUploadedFiles(
+  contentJson: Record<string, any> | null | undefined,
+  uploadedFiles: UploadedChatFile[]
+): Record<string, any> | null {
+  const merged: Record<string, any> = contentJson ? { ...contentJson } : {};
+  if (uploadedFiles.length === 0) {
+    return Object.keys(merged).length > 0 ? merged : null;
+  }
+
+  const existingUploaded = Array.isArray(merged.uploadedFiles)
+    ? merged.uploadedFiles
+        .map((entry: any) => ({
+          fileId: Number(entry?.fileId),
+          filename: String(entry?.filename || ""),
+          fileType: String(entry?.fileType || "") as UploadedChatFile["fileType"]
+        }))
+        .filter((entry: UploadedChatFile) => Number.isFinite(entry.fileId) && entry.fileId > 0)
+    : [];
+
+  merged.uploadedFiles = serializeUploadedFiles(mergeUploadedFiles(existingUploaded, uploadedFiles));
+  return merged;
+}
+
 function isWizardWaitingForFiles(messages: UiMessage[]): boolean {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const entry = messages[index];
@@ -334,7 +365,14 @@ export default function ChatPanel() {
   }, [threadMenuOpenFor]);
 
   const sendMessage = useCallback(
-    async (text: string, opts?: { contentJson?: Record<string, any> | null; clearPendingUploads?: boolean }) => {
+    async (
+      text: string,
+      opts?: {
+        contentJson?: Record<string, any> | null;
+        clearPendingUploads?: boolean;
+        includePendingUploads?: boolean;
+      }
+    ) => {
       const trimmed = String(text || "").trim();
       if (!trimmed || submitting) return;
 
@@ -342,23 +380,8 @@ export default function ChatPanel() {
       setError(null);
       setStreamStatus(null);
 
-      const uploadContext =
-        pendingUploadedFiles.length > 0
-          ? {
-              uploadedFiles: pendingUploadedFiles.map((entry) => ({
-                fileId: entry.fileId,
-                filename: entry.filename,
-                fileType: entry.fileType
-              }))
-            }
-          : null;
-      const mergedContentJson =
-        opts?.contentJson || uploadContext
-          ? {
-              ...(opts?.contentJson || {}),
-              ...(uploadContext || {})
-            }
-          : null;
+      const pendingForMessage = opts?.includePendingUploads === false ? [] : pendingUploadedFiles;
+      const mergedContentJson = mergeContentJsonWithUploadedFiles(opts?.contentJson, pendingForMessage);
 
       const threadId = activeThreadId ?? (await loadThreads())?.id;
       if (!threadId) {
@@ -389,8 +412,9 @@ export default function ChatPanel() {
           contentJson: mergedContentJson
         });
         setMessages((prev) => prev.map((entry) => (entry.id === optimisticUserMessage.id ? start.userMessage : entry)));
-        if ((opts?.clearPendingUploads ?? true) && pendingUploadedFiles.length > 0) {
-          setPendingUploadedFiles([]);
+        if ((opts?.clearPendingUploads ?? true) && pendingForMessage.length > 0) {
+          const sentFileIds = new Set(pendingForMessage.map((entry) => entry.fileId));
+          setPendingUploadedFiles((prev) => prev.filter((entry) => !sentFileIds.has(entry.fileId)));
         }
 
         const draftAssistantId = `draft-assistant-${start.requestId}`;
@@ -517,7 +541,10 @@ export default function ChatPanel() {
           }
         }
 
-        if (uploaded.length > 0) {
+        const shouldAutoSendUploadedFiles =
+          uploaded.length > 0 && isWizardWaitingForFiles(messages) && !draft.trim();
+
+        if (uploaded.length > 0 && !shouldAutoSendUploadedFiles) {
           setPendingUploadedFiles((prev) => mergeUploadedFiles(prev, uploaded));
         }
 
@@ -536,16 +563,15 @@ export default function ChatPanel() {
           setError(failed.join(" | "));
         }
 
-        if (uploaded.length > 0 && isWizardWaitingForFiles(messages) && !draft.trim()) {
+        if (shouldAutoSendUploadedFiles) {
+          const filesForMessage = mergeUploadedFiles(pendingUploadedFiles, uploaded);
+          setPendingUploadedFiles([]);
           void sendMessage("I uploaded the requested file(s).", {
             contentJson: {
-              uploadedFiles: uploaded.map((entry) => ({
-                fileId: entry.fileId,
-                filename: entry.filename,
-                fileType: entry.fileType
-              }))
+              uploadedFiles: serializeUploadedFiles(filesForMessage)
             },
-            clearPendingUploads: true
+            clearPendingUploads: false,
+            includePendingUploads: false
           });
         }
       } catch (err: any) {
@@ -555,7 +581,7 @@ export default function ChatPanel() {
         setUploadingFiles(false);
       }
     },
-    [chatUploadConfigByType, chatUploadProjectId, draft, messages, sendMessage]
+    [chatUploadConfigByType, chatUploadProjectId, draft, messages, pendingUploadedFiles, sendMessage]
   );
 
   const handleOpenFilePicker = useCallback(() => {

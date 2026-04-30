@@ -220,7 +220,7 @@ export default function SetupWizardPage({
       });
       setAgentConnectionTest({
         status: "success",
-        message: "Connection successful. Fastcat could reach the configured endpoint.",
+        message: "Connection successful. FastCAT could reach the configured endpoint.",
         latencyMs: Number.isFinite(Number(result.latencyMs)) ? Number(result.latencyMs) : null,
         resolvedUrl: result.resolvedUrl ? String(result.resolvedUrl) : null
       });
@@ -589,7 +589,7 @@ export default function SetupWizardPage({
                                 {agentConnectionTest.status === "testing" ? "Testing..." : "Test connection"}
                               </button>
                               <div className="text-muted small">
-                                Runs from the Fastcat backend so you can verify the app can actually reach the endpoint.
+                                Runs from the FastCAT backend so you can verify the app can actually reach the endpoint.
                               </div>
                             </div>
 

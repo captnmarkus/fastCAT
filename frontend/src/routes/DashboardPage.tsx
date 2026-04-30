@@ -1,4 +1,13 @@
 import React, { useCallback, useEffect, useState } from "react";
+import AddIcon from "@mui/icons-material/Add";
+import FolderOpenIcon from "@mui/icons-material/FolderOpen";
+import SettingsSuggestIcon from "@mui/icons-material/SettingsSuggest";
+import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
+import Typography from "@mui/material/Typography";
 import { useNavigate } from "react-router-dom";
 import { getAppAgentStatus, listInboxItems, listProjects } from "../api";
 import ChatPanel from "../components/dashboard/ChatPanel";
@@ -72,12 +81,22 @@ export default function DashboardPage({ currentUser }: { currentUser: AuthUser |
   }, [currentUser, loadSummary]);
 
   if (!currentUser || loading) {
-    return <div className="text-muted p-3">Loading dashboard...</div>;
+    return (
+      <Box sx={{ color: "text.secondary", p: 3 }}>
+        Loading dashboard...
+      </Box>
+    );
   }
 
   return (
-    <div className="fc-dashboard-page py-3">
-      <section className="card-enterprise fc-dashboard-hero" aria-labelledby="fc-dashboard-title">
+    <Box className="fc-dashboard-page" sx={{ py: 3 }}>
+      <Box component="section" className="fc-dashboard-hero" aria-labelledby="fc-dashboard-title">
+        <img
+          className="fc-dashboard-hero-image"
+          src="/images/fastcat-dashboard-hero.png"
+          alt=""
+          aria-hidden="true"
+        />
         <div className="fc-dashboard-hero-content">
           <div className="fc-dashboard-hero-main">
             <div className="fc-dashboard-kicker">Home</div>
@@ -88,67 +107,105 @@ export default function DashboardPage({ currentUser }: { currentUser: AuthUser |
               Start a translation, track progress, download deliverables, and resolve action-required items from one place.
             </p>
             <div className="fc-dashboard-hero-actions">
-              <button type="button" className="btn btn-dark" onClick={() => navigate("/projects/create")}>
-                <i className="bi bi-plus-lg me-1" aria-hidden="true" />
+              <Button
+                type="button"
+                variant="contained"
+                color="primary"
+                startIcon={<AddIcon />}
+                onClick={() => navigate("/projects/create")}
+              >
                 Start New Translation
-              </button>
-              <button type="button" className="btn btn-outline-secondary" onClick={() => navigate("/projects")}>
+              </Button>
+              <Button
+                type="button"
+                variant="outlined"
+                startIcon={<FolderOpenIcon />}
+                onClick={() => navigate("/projects")}
+                sx={{
+                  borderColor: "rgba(255, 255, 255, 0.56)",
+                  color: "#f8fafc",
+                  backgroundColor: "rgba(15, 23, 42, 0.14)",
+                  "&:hover": {
+                    borderColor: "rgba(255, 255, 255, 0.76)",
+                    backgroundColor: "rgba(15, 23, 42, 0.26)"
+                  }
+                }}
+              >
                 Open Projects
-              </button>
+              </Button>
             </div>
             <div className="fc-dashboard-hero-note">Smart defaults first. Advanced project options stay in the full wizard.</div>
           </div>
 
-          <div className="fc-dashboard-metrics" aria-label="Dashboard summary">
-            <div className="fc-dashboard-metric">
+          <Box className="fc-dashboard-metrics" aria-label="Dashboard summary">
+            <Paper className="fc-dashboard-metric" elevation={0}>
               <div className="fc-dashboard-metric-label">Active projects</div>
               <div className="fc-dashboard-metric-value">{summary.activeProjects}</div>
-            </div>
-            <div className="fc-dashboard-metric">
+            </Paper>
+            <Paper className="fc-dashboard-metric" elevation={0}>
               <div className="fc-dashboard-metric-label">Action required</div>
               <div className="fc-dashboard-metric-value">{summary.actionRequired}</div>
-            </div>
-            <div className="fc-dashboard-metric">
+            </Paper>
+            <Paper className="fc-dashboard-metric" elevation={0}>
               <div className="fc-dashboard-metric-label">Ready to download</div>
               <div className="fc-dashboard-metric-value">{summary.readyToDownload}</div>
-            </div>
-            <div className="fc-dashboard-metric">
+            </Paper>
+            <Paper className="fc-dashboard-metric" elevation={0}>
               <div className="fc-dashboard-metric-label">Average progress</div>
               <div className="fc-dashboard-metric-value">{summary.averageProgress}%</div>
-            </div>
-          </div>
+            </Paper>
+          </Box>
         </div>
-      </section>
+      </Box>
 
       {error ? (
-        <div className="alert alert-danger d-flex align-items-center justify-content-between mb-0" role="alert">
-          <span>{error}</span>
-          <button type="button" className="btn btn-outline-danger btn-sm" onClick={() => loadSummary()}>
-            Retry
-          </button>
-        </div>
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => loadSummary()}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </Alert>
       ) : null}
       {agentStatus && !agentStatus.availability.usable ? (
-        <section className="card-enterprise fc-dashboard-agent-placeholder">
-          <div className="fc-dashboard-agent-placeholder-kicker">App Agent</div>
-          <div className="fc-dashboard-agent-placeholder-title">{agentStatus.availability.title}</div>
-          <p className="fc-dashboard-agent-placeholder-copy mb-0">{agentStatus.availability.description}</p>
-          <div className="fc-dashboard-agent-placeholder-meta">
-            {currentUser.role === "admin"
-              ? "Open the admin panel to complete the live agent setup."
-              : "An administrator needs to finish the App Agent setup before chat becomes available here."}
-          </div>
-          {currentUser.role === "admin" ? (
-            <div className="fc-dashboard-agent-placeholder-actions">
-              <button type="button" className="btn btn-dark" onClick={() => navigate("/admin/app-agent")}>
-                Open App Agent Settings
-              </button>
+        <Paper component="section" className="fc-dashboard-agent-placeholder" elevation={0}>
+          <div className="fc-dashboard-agent-placeholder-content">
+            <div className="fc-dashboard-agent-placeholder-kicker">App Agent</div>
+            <Typography className="fc-dashboard-agent-placeholder-title" component="h2">
+              {agentStatus.availability.title}
+            </Typography>
+            <Typography className="fc-dashboard-agent-placeholder-copy" variant="body2">
+              {agentStatus.availability.description}
+            </Typography>
+            <div className="fc-dashboard-agent-placeholder-meta">
+              {currentUser.role === "admin"
+                ? "Open the admin panel to complete the live agent setup."
+                : "An administrator needs to finish the App Agent setup before chat becomes available here."}
             </div>
-          ) : null}
-        </section>
+            {currentUser.role === "admin" ? (
+              <Stack className="fc-dashboard-agent-placeholder-actions" direction="row">
+                <Button
+                  type="button"
+                  variant="contained"
+                  color="primary"
+                  startIcon={<SettingsSuggestIcon />}
+                  onClick={() => navigate("/admin/app-agent")}
+                >
+                  Open App Agent Settings
+                </Button>
+              </Stack>
+            ) : null}
+          </div>
+          <div className="fc-dashboard-agent-visual" aria-hidden="true">
+            <img src="/images/fastcat-agent-visual.png" alt="" />
+          </div>
+        </Paper>
       ) : (
         <ChatPanel />
       )}
-    </div>
+    </Box>
   );
 }

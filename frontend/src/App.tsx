@@ -1,4 +1,12 @@
 import React, { useEffect, useState } from "react";
+import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Card from "@mui/material/Card";
+import CardContent from "@mui/material/CardContent";
+import CircularProgress from "@mui/material/CircularProgress";
+import Stack from "@mui/material/Stack";
+import Typography from "@mui/material/Typography";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { getSetupStatus, logout, me } from "./api";
 import Login from "./Login";
@@ -114,19 +122,21 @@ export default function App() {
     return (
       <TableDensityProvider storageScope={densityStorageScope}>
         <style>{GLOBAL_STYLES}</style>
-        <div className="min-vh-100 d-flex align-items-center justify-content-center bg-light">
-          <div className="card shadow-sm border-0" style={{ width: 420, maxWidth: "100%" }}>
-            <div className="card-body text-center">
-              <h5 className="mb-2">Setup status unavailable</h5>
-              <p className="text-muted small mb-3">
+        <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", bgcolor: "background.default", p: 2 }}>
+          <Card elevation={0} sx={{ width: 420, maxWidth: "100%" }}>
+            <CardContent sx={{ textAlign: "center", p: 3, "&:last-child": { pb: 3 } }}>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                Setup status unavailable
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 FastCAT could not verify whether Global Setup is complete. Please check the API service and retry.
-              </p>
-              <button className="btn btn-primary" onClick={() => window.location.reload()}>
+              </Typography>
+              <Button variant="contained" onClick={() => window.location.reload()}>
                 Retry
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </CardContent>
+          </Card>
+        </Box>
       </TableDensityProvider>
     );
   }
@@ -486,15 +496,15 @@ function LegacyEditorRedirect() {
   const fileId = Number(params.fileId);
   if (!Number.isFinite(fileId) || fileId <= 0) {
     return (
-      <div className="alert alert-warning m-3">
+      <Alert severity="warning" sx={{ m: 3 }}>
         Invalid file link.
-      </div>
+      </Alert>
     );
   }
   return (
-    <div className="alert alert-warning m-3">
+    <Alert severity="warning" sx={{ m: 3 }}>
       This link points to a legacy file. Open the task from the Inbox to continue.
-    </div>
+    </Alert>
   );
 }
 
@@ -515,8 +525,11 @@ function RequireAuth({
   }
   if (!user) {
     return (
-      <div className="min-vh-100 d-flex align-items-center justify-content-center bg-light">
-        <div style={{ width: "360px", maxWidth: "100%" }}>
+      <div className="fc-auth-page">
+        <div className="fc-auth-visual" aria-hidden="true">
+          <img src="/images/fastcat-dashboard-hero.png" alt="" />
+        </div>
+        <div className="fc-auth-panel">
           <Login onSuccess={onSignedIn} />
         </div>
       </div>
@@ -530,10 +543,12 @@ function RequireAuth({
 
 function LoadingScreen() {
   return (
-    <div className="d-flex align-items-center justify-content-center py-5">
-      <span className="spinner-border text-dark me-2" />
-      <span>Loading FastCAT...</span>
-    </div>
+    <Box sx={{ display: "grid", placeItems: "center", py: 5 }}>
+      <Stack direction="row" spacing={1.5} alignItems="center">
+        <CircularProgress size={22} />
+        <Typography color="text.secondary">Loading FastCAT...</Typography>
+      </Stack>
+    </Box>
   );
 }
 
@@ -549,9 +564,9 @@ function RequireRole({
   if (!user) return null;
   if (!allow.includes(user.role)) {
     return (
-      <div className="alert alert-warning">
+      <Alert severity="warning">
         You do not have permission to view this page.
-      </div>
+      </Alert>
     );
   }
   return <>{children}</>;

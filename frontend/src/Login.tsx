@@ -1,4 +1,13 @@
 import { FormEvent, useState } from "react";
+import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Card from "@mui/material/Card";
+import CardContent from "@mui/material/CardContent";
+import CircularProgress from "@mui/material/CircularProgress";
+import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
 import { login } from "./api";
 
 type Props = {
@@ -34,28 +43,27 @@ export default function Login({ onSuccess, compact }: Props) {
     }
   }
 
-  return (
-    <div className={compact ? "" : "card shadow-sm border-0"}>
-      <div className={compact ? "" : "card-body"}>
+  const content = (
+    <Stack spacing={2.25}>
         {!compact && (
-          <div className="text-center mb-3">
+        <Box sx={{ textAlign: "center" }}>
             <img
+              className="fc-login-logo"
               src="/logos/fastcat_logo.png"
               alt="FastCAT"
-              style={{ height: 56, width: "auto" }}
             />
-            <h5 className="card-title mt-2 mb-0">Sign in to FastCAT</h5>
-            <div className="text-muted small">Translation workspace</div>
-          </div>
+          <Typography variant="h5" component="h1" sx={{ mt: 1, fontSize: "1.1rem" }}>
+            Sign in to FastCAT
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Translation workspace
+          </Typography>
+        </Box>
         )}
-        {error && <div className="alert alert-danger py-1 mb-3">{error}</div>}
-        <form onSubmit={handleSubmit}>
-          <div className="mb-3">
-            <label className="form-label small text-uppercase text-muted">
-              Username
-            </label>
-            <input
-              className="form-control"
+      {error ? <Alert severity="error">{error}</Alert> : null}
+      <Stack component="form" spacing={2} onSubmit={handleSubmit}>
+        <TextField
+              label="Username"
               value={username}
               autoComplete="username"
               autoFocus
@@ -64,15 +72,11 @@ export default function Login({ onSuccess, compact }: Props) {
                 setUsername(e.target.value);
                 if (error) setError(null);
               }}
+          fullWidth
             />
-          </div>
-          <div className="mb-3">
-            <label className="form-label small text-uppercase text-muted">
-              Password
-            </label>
-            <input
+        <TextField
               type="password"
-              className="form-control"
+          label="Password"
               value={password}
               autoComplete="current-password"
               disabled={loading}
@@ -80,23 +84,34 @@ export default function Login({ onSuccess, compact }: Props) {
                 setPassword(e.target.value);
                 if (error) setError(null);
               }}
+          fullWidth
             />
-          </div>
-          <button
+        <Button
             type="submit"
-            className="btn btn-primary w-100"
+          variant="contained"
+          color="primary"
             disabled={loading}
+          fullWidth
+          startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}
           >
-            {loading && (
-              <span className="spinner-border spinner-border-sm me-2" />
-            )}
             Sign in
-          </button>
-          <div className="form-text mt-2 text-center">
-            Admins can create team members inside the workspace.
-          </div>
-        </form>
-      </div>
-    </div>
+        </Button>
+        <Typography variant="caption" color="text.secondary" sx={{ textAlign: "center" }}>
+          Admins can create team members inside the workspace.
+        </Typography>
+      </Stack>
+    </Stack>
+  );
+
+  if (compact) {
+    return <Box>{content}</Box>;
+  }
+
+  return (
+    <Card className="fc-login-card" elevation={0}>
+      <CardContent sx={{ p: { xs: 2.5, sm: 3 }, "&:last-child": { pb: { xs: 2.5, sm: 3 } } }}>
+        {content}
+      </CardContent>
+    </Card>
   );
 }

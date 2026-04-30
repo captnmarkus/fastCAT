@@ -59,6 +59,20 @@ export const GLOBAL_STYLES_UI_PART_4 = String.raw`
   }
 
   @media (max-width: 992px) {
+    .fc-auth-page {
+      grid-template-columns: minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .fc-auth-visual {
+      min-height: 13rem;
+      max-height: 32vh;
+    }
+
+    .fc-auth-panel {
+      align-items: flex-start;
+    }
+
     .fc-wizard-layout {
       grid-template-columns: minmax(0, 1fr);
       grid-template-areas:
@@ -172,8 +186,28 @@ export const GLOBAL_STYLES_UI_PART_4 = String.raw`
       flex-direction: column;
     }
 
+    .fc-dashboard-hero-image {
+      object-position: 62% center;
+    }
+
+    .fc-dashboard-hero::before {
+      background:
+        linear-gradient(90deg, rgba(3, 7, 18, 0.92) 0%, rgba(3, 7, 18, 0.78) 58%, rgba(3, 7, 18, 0.46) 100%),
+        linear-gradient(180deg, rgba(3, 7, 18, 0.28) 0%, rgba(3, 7, 18, 0.42) 100%);
+    }
+
     .fc-dashboard-metrics {
       width: 100%;
+    }
+
+    .fc-dashboard-agent-placeholder {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .fc-dashboard-agent-visual {
+      justify-self: stretch;
+      width: 100%;
+      max-height: 15rem;
     }
 
     .fc-dashboard-grid {

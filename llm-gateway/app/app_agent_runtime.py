@@ -115,6 +115,29 @@ def _normalize_lang_list(value: Any) -> list[str]:
   return deduped
 
 
+def _resolve_enabled_language_tag(value: str | None, enabled_languages: Any) -> str | None:
+  normalized = _normalize_lang_tag(value)
+  if not normalized:
+    return None
+  enabled = _normalize_lang_list(enabled_languages)
+  if not enabled:
+    return normalized
+  if normalized in enabled:
+    return normalized
+  base = normalized.split("-")[0]
+  if "-" in normalized and base in enabled:
+    return base
+  if "-" not in normalized:
+    matches = [entry for entry in enabled if entry.split("-")[0] == base]
+    if len(matches) == 1:
+      return matches[0]
+  return normalized
+
+
+def _strip_quoted_text(value: str) -> str:
+  return re.sub(r'"[^"]*"|\'[^\']*\'|`[^`]*`', " ", str(value or ""))
+
+
 def _normalize_tool_set(value: Any) -> set[str]:
   if isinstance(value, str):
     try:
@@ -267,7 +290,7 @@ def _contains_admin_intent(text: str) -> bool:
 
 
 def _extract_target_langs(text: str) -> list[str]:
-  raw_text = str(text or "")
+  raw_text = _strip_quoted_text(str(text or ""))
   match = re.search(
     r"\b(?:target\s+languages?|targets?)\s*(?:are|is|=|:)?\s*"
     r"([a-z]{2,3}(?:-[a-z0-9]{2,8})?\b(?:\s*,\s*[a-z]{2,3}(?:-[a-z0-9]{2,8})?\b)*)",
@@ -292,10 +315,16 @@ def _extract_target_langs(text: str) -> list[str]:
 
 
 def _extract_source_lang(text: str) -> str | None:
-  match = re.search(r"\bfrom\s+([a-z]{2,3}(?:-[a-z0-9]{2,8})?)", text, re.IGNORECASE)
-  if not match:
-    return None
-  return _normalize_lang_tag(match.group(1))
+  raw_text = _strip_quoted_text(str(text or ""))
+  patterns = [
+    r"\b(?:source\s+language|source|source_lang)\s*(?:is|=|:)?\s*([a-z]{2,3}(?:-[a-z0-9]{2,8})?)\b",
+    r"\bfrom\s+([a-z]{2,3}(?:-[a-z0-9]{2,8})?)\s+(?:to|into|target)\b",
+  ]
+  for pattern in patterns:
+    match = re.search(pattern, raw_text, re.IGNORECASE)
+    if match:
+      return _normalize_lang_tag(match.group(1))
+  return None
 
 
 def _extract_file_ids(text: str) -> list[int]:
@@ -430,6 +459,26 @@ def _extract_wizard_context_from_history(history: list[dict[str, Any]]) -> dict[
   return None
 
 
+def _extract_pending_translation_from_history(history: list[dict[str, Any]]) -> dict[str, Any] | None:
+  for entry in reversed(history):
+    if str(entry.get("role") or "").lower() != "assistant":
+      continue
+    content_json = entry.get("content_json")
+    if not isinstance(content_json, dict):
+      continue
+    pending = content_json.get("pendingTranslation")
+    if not isinstance(pending, dict):
+      continue
+    snippet = str(pending.get("snippet") or "").strip()
+    if not snippet:
+      continue
+    return {
+      "snippet": snippet,
+      "source_lang": _normalize_lang_tag(str(pending.get("sourceLang") or pending.get("source_lang") or "")),
+    }
+  return None
+
+
 def _is_create_project_intent(text: str) -> bool:
   raw = str(text or "")
   if not raw:
@@ -480,6 +529,7 @@ def _plan_action(text: str, config: AppAgentRuntimeConfig, history: list[dict[st
   wizard_active = bool(wizard_context and wizard_context.get("active"))
   create_intent = _is_create_project_intent(raw)
   translate_intent = bool(re.search(r"\btranslate|translation\b", raw, re.IGNORECASE))
+  pending_translation = _extract_pending_translation_from_history(history)
 
   if not raw:
     if wizard_active and "create_project" in config.enabled_tools:
@@ -494,6 +544,20 @@ def _plan_action(text: str, config: AppAgentRuntimeConfig, history: list[dict[st
       "mode": "direct",
       "message": "I cannot perform admin operations. I can help with translation snippets and your own projects.",
     }
+
+  if pending_translation and not wizard_active and not create_intent and "translate_snippet" in config.enabled_tools:
+    follow_up_targets = _extract_target_langs(raw) or _extract_lang_mentions(raw)
+    if follow_up_targets:
+      return {
+        "mode": "tool",
+        "tool_name": "translate_snippet",
+        "args": {
+          "text": str(pending_translation.get("snippet") or ""),
+          "target_lang": follow_up_targets[0],
+          "source_lang": pending_translation.get("source_lang"),
+          "tone": None,
+        },
+      }
 
   # Quick numeric menu shortcuts
   if raw_lower in {"1", "translate", "translate snippet"}:
@@ -951,6 +1015,8 @@ __all__ = [
   'AppAgentUserContext',
   '_normalize_lang_tag',
   '_normalize_lang_list',
+  '_resolve_enabled_language_tag',
+  '_strip_quoted_text',
   '_normalize_tool_set',
   '_normalize_runtime_config',
   '_load_runtime_config',
@@ -967,6 +1033,7 @@ __all__ = [
   '_parse_project_title_choice',
   '_extract_translation_snippet',
   '_extract_wizard_context_from_history',
+  '_extract_pending_translation_from_history',
   '_is_create_project_intent',
   '_is_project_wizard_info_intent',
   '_main_menu_message',

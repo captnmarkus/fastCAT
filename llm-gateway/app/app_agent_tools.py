@@ -28,32 +28,45 @@ from app.app_agent_provider_runtime import (
 from app.app_agent_runtime import *
 from app.app_agent_wizard import _load_workspace_languages
 
+
+def _agent_tool_error_from_http_exception(exc: HTTPException) -> AgentToolError:
+  detail = exc.detail
+  if isinstance(detail, dict):
+    message = str(detail.get("error") or detail.get("message") or "Provider configuration error.").strip()
+  else:
+    message = str(detail or "Provider configuration error.").strip()
+  return AgentToolError(message or "Provider configuration error.")
+
+
 async def _resolve_provider_for_agent(pool: asyncpg.Pool, config: AppAgentRuntimeConfig) -> tuple[str, str | None, str]:
-  provider: ProviderConfig | None = None
-  if config.provider_id:
-    provider = await fetch_provider(pool, config.provider_id)
-  elif config.connection_provider == "gateway" and not config.endpoint:
+  try:
+    provider: ProviderConfig | None = None
+    if config.provider_id:
+      provider = await fetch_provider(pool, config.provider_id)
+    elif config.connection_provider == "gateway" and not config.endpoint:
+      provider = await resolve_default_provider(pool)
+
+    if config.endpoint:
+      base_url = normalize_base_url(config.endpoint)
+      api_key = provider.api_key if provider else None
+      model = config.model_name or (provider.model if provider else None) or ""
+      if not model:
+        raise AgentToolError("model_name is required when endpoint override is used.")
+      return (base_url, api_key, model)
+
+    if provider:
+      model = config.model_name or provider.model or ""
+      if not model:
+        raise AgentToolError("No model configured for App Agent.")
+      return (provider.base_url, provider.api_key, model)
+
     provider = await resolve_default_provider(pool)
-
-  if config.endpoint:
-    base_url = normalize_base_url(config.endpoint)
-    api_key = provider.api_key if provider else None
-    model = config.model_name or (provider.model if provider else None) or ""
-    if not model:
-      raise AgentToolError("model_name is required when endpoint override is used.")
-    return (base_url, api_key, model)
-
-  if provider:
     model = config.model_name or provider.model or ""
     if not model:
       raise AgentToolError("No model configured for App Agent.")
     return (provider.base_url, provider.api_key, model)
-
-  provider = await resolve_default_provider(pool)
-  model = config.model_name or provider.model or ""
-  if not model:
-    raise AgentToolError("No model configured for App Agent.")
-  return (provider.base_url, provider.api_key, model)
+  except HTTPException as exc:
+    raise _agent_tool_error_from_http_exception(exc) from exc
 
 
 async def _run_translation_tool(
@@ -85,6 +98,8 @@ async def _run_translation_tool(
   )
   enabled_languages = language_cfg.get("enabled") if isinstance(language_cfg.get("enabled"), list) else []
   enabled_set = set(enabled_languages)
+  target_lang = _resolve_enabled_language_tag(target_lang, enabled_languages)
+  source_lang = _resolve_enabled_language_tag(source_lang, enabled_languages)
   if enabled_set and target_lang not in enabled_set:
     raise AgentToolError(f"Target language '{target_lang}' is not enabled in Language Settings.")
   if source_lang and enabled_set and source_lang not in enabled_set:

@@ -224,6 +224,61 @@ export const GLOBAL_STYLES_UI_PART_1 = String.raw`
     color: var(--fc-info-text);
   }
 
+  .fc-auth-page {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(22rem, 28rem);
+    align-items: stretch;
+    background: #f8f9fb;
+  }
+
+  .fc-auth-visual {
+    position: relative;
+    overflow: hidden;
+    background: #07111d;
+  }
+
+  .fc-auth-visual img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center right;
+  }
+
+  .fc-auth-visual::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(90deg, rgba(3, 7, 18, 0.56), rgba(3, 7, 18, 0.08)),
+      linear-gradient(180deg, rgba(3, 7, 18, 0.1), rgba(3, 7, 18, 0.42));
+  }
+
+  .fc-auth-panel {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: clamp(1rem, 3vw, 3rem);
+  }
+
+  .fc-login-card {
+    width: min(100%, 23rem);
+    border: 1px solid var(--fc-divider) !important;
+    border-radius: var(--fc-radius-lg);
+    box-shadow: 0 20px 42px rgba(15, 23, 42, 0.12) !important;
+  }
+
+  .fc-login-card .card-body {
+    padding: clamp(1.25rem, 1vw + 1rem, 1.75rem);
+  }
+
+  .fc-login-logo {
+    height: 3.35rem;
+    width: auto;
+  }
+
   .fc-wizard-shell {
     --fc-wizard-stepper-width: 248px;
     --fc-wizard-main-max: 1080px;

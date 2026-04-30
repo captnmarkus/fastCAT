@@ -343,10 +343,11 @@ async def _resolve_project_wizard_plan_v2(
   source_error: str | None = None
   parsed_source = _extract_source_lang(raw)
   if parsed_source:
-    if allowed_languages and parsed_source not in allowed_languages:
+    resolved_source = _resolve_enabled_language_tag(parsed_source, enabled_languages)
+    if allowed_languages and resolved_source not in allowed_languages:
       source_error = f"Source language `{parsed_source}` is not enabled. Ask a manager/admin to enable it."
-    elif parsed_source != state.get("source_lang"):
-      state["source_lang"] = parsed_source
+    elif resolved_source != state.get("source_lang"):
+      state["source_lang"] = resolved_source
       state_changed = True
 
   target_error: str | None = None
@@ -369,12 +370,14 @@ async def _resolve_project_wizard_plan_v2(
 
     valid_targets: list[str] = []
     for target in normalized_targets:
-      if allowed_languages and target not in allowed_languages:
+      resolved_target = _resolve_enabled_language_tag(target, enabled_languages)
+      if allowed_languages and resolved_target not in allowed_languages:
         invalid_target_langs.append(target)
         continue
-      if state.get("source_lang") and target == state.get("source_lang"):
+      if state.get("source_lang") and resolved_target == state.get("source_lang"):
         continue
-      valid_targets.append(target)
+      if resolved_target and resolved_target not in valid_targets:
+        valid_targets.append(resolved_target)
 
     if valid_targets and valid_targets != state["target_langs"]:
       state["target_langs"] = valid_targets

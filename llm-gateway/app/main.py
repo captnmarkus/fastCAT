@@ -412,6 +412,12 @@ async def app_agent_chat(request: Request) -> Response:
         resolved_plan = {
           "mode": "direct",
           "message": f"Target language is required for snippet translation.{hint} Reply with a language code, for example: translate \"{snippet}\" to de.",
+          "content_json": {
+            "pendingTranslation": {
+              "snippet": snippet,
+              "sourceLang": source_lang,
+            }
+          },
         }
 
       plan_content_json = (

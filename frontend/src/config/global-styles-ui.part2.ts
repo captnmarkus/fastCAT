@@ -632,38 +632,39 @@ export const GLOBAL_STYLES_UI_PART_2 = String.raw`
     position: relative;
     overflow: hidden;
     padding: clamp(1.2rem, 1.4vw + 0.9rem, 2rem);
-    border: 1px solid rgba(15, 23, 42, 0.2);
+    border: 1px solid rgba(15, 23, 42, 0.18);
+    border-radius: var(--fc-radius-lg);
     box-shadow: 0 20px 42px rgba(15, 23, 42, 0.22);
-    background:
-      radial-gradient(circle at 88% 4%, rgba(251, 191, 36, 0.34), transparent 32%),
-      radial-gradient(circle at 9% 88%, rgba(56, 189, 248, 0.28), transparent 36%),
-      linear-gradient(130deg, #0f172a 0%, #0f766e 58%, #f59e0b 130%);
+    background: #07111d;
     color: #f8fafc;
+    min-height: 18rem;
   }
 
-  .fc-dashboard-hero::before,
-  .fc-dashboard-hero::after {
-    content: "";
+  .fc-dashboard-hero-image {
     position: absolute;
-    border-radius: 999px;
-    pointer-events: none;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center right;
   }
 
   .fc-dashboard-hero::before {
-    width: 22rem;
-    height: 22rem;
-    right: -8rem;
-    top: -8rem;
-    background: rgba(255, 255, 255, 0.1);
-    filter: blur(2px);
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(90deg, rgba(3, 7, 18, 0.94) 0%, rgba(3, 7, 18, 0.82) 32%, rgba(3, 7, 18, 0.45) 64%, rgba(3, 7, 18, 0.2) 100%),
+      linear-gradient(180deg, rgba(3, 7, 18, 0.22) 0%, rgba(3, 7, 18, 0.36) 100%);
+    pointer-events: none;
   }
 
   .fc-dashboard-hero::after {
-    width: 16rem;
-    height: 16rem;
-    left: -7rem;
-    bottom: -8rem;
-    background: rgba(255, 255, 255, 0.07);
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
 
   .fc-dashboard-hero-content {
@@ -743,11 +744,13 @@ export const GLOBAL_STYLES_UI_PART_2 = String.raw`
   .fc-dashboard-agent-placeholder {
     position: relative;
     overflow: hidden;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 23rem);
+    align-items: center;
+    gap: clamp(1rem, 2vw, 2rem);
     padding: clamp(1.15rem, 1vw + 0.95rem, 1.6rem);
     border: 1px solid rgba(15, 23, 42, 0.1);
-    background:
-      radial-gradient(circle at top right, rgba(14, 165, 233, 0.14), transparent 32%),
-      linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.98));
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.98));
     box-shadow: 0 20px 36px rgba(15, 23, 42, 0.08);
   }
 
@@ -757,6 +760,30 @@ export const GLOBAL_STYLES_UI_PART_2 = String.raw`
     inset: 0 auto 0 0;
     width: 0.42rem;
     background: linear-gradient(180deg, #0ea5e9 0%, #14b8a6 100%);
+  }
+
+  .fc-dashboard-agent-placeholder-content {
+    min-width: 0;
+    position: relative;
+    z-index: 1;
+  }
+
+  .fc-dashboard-agent-visual {
+    justify-self: end;
+    width: min(100%, 22rem);
+    aspect-ratio: 4 / 3;
+    border-radius: var(--fc-radius-md);
+    overflow: hidden;
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    background: #fff;
+    box-shadow: 0 16px 32px rgba(15, 23, 42, 0.11);
+  }
+
+  .fc-dashboard-agent-visual img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
   .fc-dashboard-agent-placeholder-kicker {
